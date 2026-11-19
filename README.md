@@ -9,6 +9,8 @@
 and take them out with no signal. It runs in the browser and installs from Safari to the Home
 Screen, so it needs no App Store. It also works on Android and on a computer.
 
+**Open it: [app.seabathy.com](https://app.seabathy.com)**
+
 | The chart | The seabed in 3D | Satellite on the seabed |
 |---|---|---|
 | ![Depths on the chart](screenshots/chart.jpg) | ![The seabed in 3D](screenshots/3d-seabed.jpg) | ![The satellite picture on the 3D seabed](screenshots/3d-satellite.jpg) |
@@ -44,7 +46,7 @@ and Windows apps do more (tides, sea conditions, routes, tracks, anchor alarm).
 
 **iPhone or iPad** (iOS 15.2 or newer):
 
-1. Open the app's web address in **Safari**.
+1. Open **[app.seabathy.com](https://app.seabathy.com)** in **Safari**.
 2. Tap the **Share** button (a square with an arrow pointing up). On newer iPhones it is under
    the **•••** button.
 3. Scroll down and tap **Add to Home Screen**.
@@ -55,8 +57,9 @@ and Windows apps do more (tides, sea conditions, routes, tracks, anchor alarm).
 Install first, then get your depths. Safari and the installed app keep their data apart, so
 anything you add in Safari does not appear in the installed app.
 
-**Android:** open the address in Chrome and choose **Install app**.
-**Computer:** open the address in any current browser; Chrome and Edge can install it too.
+**Android:** open [app.seabathy.com](https://app.seabathy.com) in Chrome and choose **Install
+app**.
+**Computer:** open it in any current browser; Chrome and Edge can install it too.
 
 ## Get depths
 
@@ -200,7 +203,9 @@ answer part-file (range) requests and allow other sites to read it (CORS).
 
 ## Publishing the app
 
-The app is plain files with no build step, so any static host works. On GitHub Pages:
+The app at app.seabathy.com is this repository's `main` branch, served by GitHub Pages; the
+`CNAME` file holds the address. The app is plain files with no build step, so a copy of your
+own works on any static host. On GitHub Pages:
 
 1. Push this repository to GitHub.
 2. **Settings → Pages → Build and deployment → Deploy from a branch**, branch `main`, folder
