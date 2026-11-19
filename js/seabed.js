@@ -155,31 +155,82 @@ function serverSaid(bytes) {
   return said.replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
-async function download({ url, name, title, credit, asking, noData }) {
+/** A failure whose message is for the person as it stands; [detail] is the small print under it. */
+class Told extends Error {
+  constructor(message, detail = '') {
+    super(message);
+    this.detail = detail;
+  }
+}
+
+/** A server that hasn't started to answer by now isn't going to. */
+const ANSWER_TIMEOUT_MS = 120000;
+const RETRY_WAIT_MS = 1500;
+const capital = (text) => text[0].toUpperCase() + text.slice(1);
+
+/**
+ * Asks [who] for [url]. Nothing coming back is tried once more before giving up, and the
+ * reason given is the real one: a phone that is offline, a server that is slow, or a request
+ * that never got an answer (which is not the same as having no internet).
+ */
+async function ask(url, who, site, progress, asking) {
+  for (let attempt = 1; ; attempt++) {
+    const waiting = new AbortController();
+    const timer = setTimeout(() => waiting.abort(), ANSWER_TIMEOUT_MS);
+    // Cancel stops the wait, and the download after it.
+    progress.signal.addEventListener('abort', () => waiting.abort(), { once: true });
+    try {
+      return await fetch(url, { signal: waiting.signal });
+    } catch (error) {
+      if (progress.signal.aborted) throw error;
+      if (!navigator.onLine) throw new Told('This device is offline. The depths need the internet to download.');
+      if (waiting.signal.aborted) throw new Told(`${capital(who)} took too long to answer. It may be busy: try again in a few minutes, or draw a smaller box.`);
+      if (attempt >= 2) {
+        throw new Told(
+          `${capital(who)} did not answer. Your internet may be fine: the server may be down for a moment, or something between you and it is stopping the request, such as a work or public network, a VPN or an ad blocker. Try again in a few minutes.`,
+          `To check, open ${site} in this browser. If that page doesn't load either, this connection can't reach the server. (The browser said: ${String(error?.message || error).slice(0, 80)}.)`);
+      }
+      progress.set(null, `No answer from ${who}. Trying once more…`);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS));
+      if (progress.signal.aborted) throw error;
+      progress.set(null, asking);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function download({ url, name, title, credit, asking, noData, who, site }) {
   const progress = progressCard(title, 'Keep SeaBathy open and on screen until this finishes.');
   const letSleep = await holdScreenOn();
   try {
     progress.set(null, asking);
-    const response = await fetch(url, { signal: progress.signal });
+    const response = await ask(url, who, site, progress, asking);
+    if (response.status === 429 || response.status >= 500) throw new Told(`${capital(who)} is busy or having trouble just now (it answered ${response.status}). Try again in a few minutes.`);
     // A map server explains a refusal in the body of a "400"; anything else is a failure.
-    if (!response.ok && response.status !== 400) throw new Error(`The depth service answered ${response.status}. Try again later.`);
+    if (!response.ok && response.status !== 400) throw new Told(`${capital(who)} answered ${response.status}, not the depths. Try again later.`);
     const parts = [];
     let got = 0;
-    const reader = response.body?.getReader();
-    if (reader) {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        parts.push(value);
-        got += value.length;
-        progress.set(null, `Downloading the depths: ${files.formatBytes(got)}`);
+    try {
+      const reader = response.body?.getReader();
+      if (reader) {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          parts.push(value);
+          got += value.length;
+          progress.set(null, `Downloading the depths: ${files.formatBytes(got)}`);
+        }
+      } else {
+        parts.push(new Uint8Array(await response.arrayBuffer()));
       }
-    } else {
-      parts.push(new Uint8Array(await response.arrayBuffer()));
+    } catch (error) {
+      if (progress.signal.aborted) throw error;
+      throw new Told(`The download from ${who} was cut off part-way (${files.formatBytes(got)} had arrived). Check the connection and try again.`);
     }
     if (!parts.length || !looksLikeTiff(parts[0])) {
       const said = parts.length ? serverSaid(parts[0]) : '';
-      throw new Error(/too (big|large)|exceed|limit/i.test(said) ? 'That area is more than the depth service will send at once. Draw a smaller box and try again.' : noData);
+      throw new Told(/too (big|large)|exceed|limit/i.test(said) ? 'That area is more than the depth service will send at once. Draw a smaller box and try again.' : noData);
     }
     const file = new File(parts, `${name}.tif`, { type: 'image/tiff' });
     let chart;
@@ -188,10 +239,11 @@ async function download({ url, name, title, credit, asking, noData }) {
       chart = await charts.importTiff(file, progress, { heights: true, attribution: credit });
     } catch (error) {
       // A file that arrived whole but holds nothing: open sea beyond the data, or all land.
-      throw /no data/i.test(error.message || '') ? new Error(noData) : error;
+      throw /no data/i.test(error.message || '') ? new Told(noData) : error;
     }
     progress.close();
-    await files.keep();
+    // Asking the browser to keep the data must not hold this up: some browsers ask the person.
+    files.keep().catch(() => {});
     closeSheet();
     charts.flyTo(chart);
     toast(chart.session
@@ -199,10 +251,18 @@ async function download({ url, name, title, credit, asking, noData }) {
       : 'The depths are saved on this phone. Tap 3D to fly over them.', 7000);
   } catch (error) {
     progress.close();
-    if (progress.signal.aborted || files.isCancel(error) || error?.name === 'AbortError') toast('Stopped. Nothing was kept.');
-    else if (files.isFull(error)) toast('The phone has no room for these depths. Free up space, or delete a chart under Storage.', 8000);
-    else if (!navigator.onLine || error instanceof TypeError) toast("Couldn't reach the depth service. Check the internet and try again.", 7000);
-    else toast(error.message || "Couldn't get the seabed depths.", 8000);
+    if (progress.signal.aborted || files.isCancel(error) || error?.name === 'AbortError') {
+      toast('Stopped. Nothing was kept.');
+    } else {
+      // A failure stays on screen until it has been read.
+      const why = files.isFull(error) ? 'This device has no room for these depths. Free up space, or delete a layer under Storage.'
+        : error instanceof Told ? error.message
+          : `Something went wrong while loading the depths${error?.message ? `: ${error.message}` : '.'}`;
+      card({
+        title: "Couldn't get the depths", paragraphs: [why], fine: error instanceof Told && error.detail ? error.detail : 'Nothing was kept.', dismissable: true,
+        actions: [{ id: 'ok', label: 'OK', primary: true, domId: 'seabed-failed-ok' }]
+      });
+    }
   } finally {
     letSleep();
   }
@@ -245,7 +305,7 @@ async function getWorldwide(area) {
     return;
   }
   await download({
-    url: seabedUrl(area), name: seabedName(area), title: 'Seabed depths', credit: SEABED_CREDIT,
+    url: seabedUrl(area), name: seabedName(area), title: 'Seabed depths', credit: SEABED_CREDIT, who: 'the GMRT depth service', site: 'www.gmrt.org',
     asking: 'Asking the depth service… this can take a minute',
     noData: 'The depth service has no data for this area.'
   });
@@ -263,7 +323,7 @@ async function getHighDetail(area, plan) {
     return;
   }
   await download({
-    url: highDetailUrl(plan), name, title: 'High-detail depths', credit: HIGH_DETAIL_CREDIT,
+    url: highDetailUrl(plan), name, title: 'High-detail depths', credit: HIGH_DETAIL_CREDIT, who: "IMAS's server", site: 'geoserver.imas.utas.edu.au/geoserver/web',
     asking: "Asking IMAS's server to cut out this area… up to a minute",
     noData: 'There are no high-detail depths for this area. Try the worldwide depths.'
   });
@@ -277,7 +337,7 @@ const areaOfBox = (box, minSpan) =>
 async function pickWorldwide(map) {
   const box = await pickArea(map, {
     title: 'SEABED DEPTHS', maxKm: MAX_SPAN_KM, maxDegrees: MAX_SPAN_DEG,
-    describe: () => 'From GMRT, 55 MB at most. A smaller box comes sharper.'
+    describe: () => 'From GMRT. The size depends on the box: far less for a small one, 55 MB at the very most.'
   });
   if (box) await getWorldwide(areaOfBox(box));
 }

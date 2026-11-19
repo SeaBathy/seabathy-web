@@ -4,7 +4,7 @@
 //
 // Raise VERSION with every change to any file in FILES: that is what makes phones fetch the new copy.
 
-const VERSION = '0.3.1';
+const VERSION = '0.3.2';
 const CACHE = `seabathy-${VERSION}`;
 const FILES = [
   './',

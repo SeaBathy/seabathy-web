@@ -532,6 +532,8 @@ await step('Get seabed depths: the box drawn on the chart is downloaded and kept
   expect((await requests()).length === 0, 'the depths were asked for before the box was confirmed');
   await page.click('#area-go');
   await page.waitForFunction(() => window.seabathy.charts.list().length === 3, null, { timeout: LOAD });
+  // The layer is drawn and credited a moment after it joins the list.
+  await page.waitForFunction(() => document.querySelector('#credits').textContent.includes('GMRT'), null, { timeout: 10000 }).catch(() => {});
   const info = await page.evaluate(() => {
     const c = window.seabathy.charts.list().at(-1);
     return { name: c.name, kind: c.kind, credit: c.attribution, flipped: c.tiff.flipped, min: c.tiff.min, max: c.tiff.max, session: Boolean(c.session), credits: document.querySelector('#credits').textContent };
@@ -644,6 +646,35 @@ await step('High detail: in Australian waters, the 10 m composite is asked for f
   await page.waitForFunction(() => window.seabathy.charts.list().length === 3, null, { timeout: 10000 });
   await closeSheet(page);
   return `${info.name}; ${info.crs}; ${info.depth.toFixed(2)} m where ${probe.depth.toFixed(2)} m was written; box ${Math.round((Number(e1) - Number(e0)) / 1000)} × ${Math.round((Number(n1) - Number(n0)) / 1000)} km at full detail`;
+});
+
+await step('A download that fails says why: a server that does not answer is not called "no internet"', async () => {
+  const before = await page.evaluate(() => window.seabathy.charts.list().length);
+  const attempt = async (address) => {
+    await page.evaluate((url) => window.seabathy.seabed.useServer(url, 'imas'), address);
+    await goTo(page, MID.lng, MID.lat, 12);
+    await openMenu(page, 'menu-seabed');
+    await page.click('#seabed-high');
+    await page.waitForSelector('#area-bar');
+    await drawBox(page);
+    await pickerReady(page);
+    await page.click('#area-go');
+    await page.waitForSelector('#seabed-failed-ok', { timeout: 60000 });
+    const said = await page.locator('.card').innerText();
+    await page.click('#seabed-failed-ok');
+    await page.waitForFunction(() => !document.querySelector('.overlay'));
+    return said;
+  };
+  // Nothing listens at this address: the request never gets an answer, and is tried twice.
+  const silent = await attempt('https://localhost:59999/nothing');
+  expect(/IMAS's server did not answer/.test(silent) && /internet may be fine/.test(silent) && !/no internet|offline/i.test(silent), `with no answer the app said: ${silent.replace(/\s+/g, ' ')}`);
+  expect(/geoserver\.imas\.utas\.edu\.au/.test(silent) && /The browser said: /.test(silent), `the card gives nothing to check with: ${silent.replace(/\s+/g, ' ')}`);
+  // An address that answers, but not with depths.
+  const wrong = await attempt(`${DATA}no-such-service`);
+  expect(/IMAS's server answered 404/.test(wrong), `to a "404" the app said: ${wrong.replace(/\s+/g, ' ')}`);
+  expect(await page.evaluate(() => window.seabathy.charts.list().length) === before, 'a failed download left a layer behind');
+  await page.evaluate((url) => window.seabathy.seabed.useServer(url, 'imas'), `${DATA}high-detail-service`);
+  return 'no answer: "did not answer, your internet may be fine"; a 404: "answered 404"';
 });
 
 await step('3D: the seabed opens in 3D; height, a depth band, colours and a waypoint all work', async () => {
