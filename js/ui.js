@@ -89,6 +89,17 @@ export function backSheet() {
   showTop();
 }
 
+/** The panel now on top, to check later that it still is. */
+export const topSheet = () => stack[stack.length - 1] || null;
+
+/**
+ * Goes back one panel, but only if [sheet] is still the one on top: work that takes a moment
+ * (saving, deleting) may finish after the person has moved on to another panel.
+ */
+export function backFrom(sheet) {
+  if (sheet && topSheet() === sheet) backSheet();
+}
+
 export function closeSheet() {
   stack.length = 0;
   showTop();

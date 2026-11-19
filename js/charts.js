@@ -356,15 +356,19 @@ export async function importPmtiles(file, progress) {
   return register(probe);
 }
 
-/** Brings in a GeoTIFF depth survey picked from the phone. */
-export async function importTiff(file, progress) {
+/**
+ * Brings in a GeoTIFF depth survey: one picked from the phone, or depths the app downloaded.
+ * [heights] says its values are heights for certain (negative under water); [attribution] is
+ * the credit to show with it.
+ */
+export async function importTiff(file, progress, { heights = false, attribution = '' } = {}) {
   const id = newId();
-  const found = await survey.importTiff(file, id, progress);
+  const found = await survey.importTiff(file, id, progress, { heights });
   return register({
     id, kind: 'geotiff', where: 'local', view: 'depth', name: file.name.replace(/\.(tiff?|geotiff)$/i, '').slice(0, 80),
     added: Date.now(), size: file.size, file: found.file, gridFile: found.gridFile, bounds: found.bounds,
     minZoom: 0, maxZoom: found.maxZoom, ramp: found.ramp, tiff: found.tiff, opacity: 1, visible: true,
-    attribution: '', session: !found.kept, rev: 0
+    attribution, session: !found.kept, rev: 0
   });
 }
 

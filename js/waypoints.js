@@ -4,7 +4,7 @@
 import { Marker } from '../vendor/maplibre-gl.js';
 import * as db from './db.js';
 import { buildGpx, parseGpx } from './gpx.js';
-import { add, el, svg, toast, openSheet, refreshSheet, backSheet, closeSheet, row, button, field, heading, note, toggle, confirmCard } from './ui.js';
+import { add, el, svg, toast, openSheet, refreshSheet, topSheet, backFrom, closeSheet, row, button, field, heading, note, toggle, confirmCard } from './ui.js';
 
 export const COLOURS = ['#EF4444', '#F97316', '#EAB308', '#22C55E', '#3B82F6', '#A855F7'];
 
@@ -28,6 +28,16 @@ let map = null;
 let showNames = true;
 
 export const list = () => waypoints;
+
+const listeners = new Set();
+
+/** Has [fn] called whenever a waypoint is added, changed or deleted. Answers with a function that stops it. */
+export function onChange(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+const changed = () => { for (const fn of listeners) fn(); };
 
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
@@ -53,6 +63,7 @@ async function save(waypoint) {
   await db.put('waypoints', waypoint);
   if (!waypoints.includes(waypoint)) waypoints.push(waypoint);
   draw(waypoint);
+  changed();
 }
 
 async function remove(waypoint) {
@@ -60,6 +71,7 @@ async function remove(waypoint) {
   waypoints.splice(waypoints.indexOf(waypoint), 1);
   markers.get(waypoint.id)?.remove();
   markers.delete(waypoint.id);
+  changed();
 }
 
 /** A new waypoint at a place, opened for editing straight away. */
@@ -70,12 +82,20 @@ export async function addAt(lng, lat) {
   return waypoint;
 }
 
+/** A new waypoint at a place, saved as it is: the 3D view drops them with a tap on the seabed. */
+export async function addQuiet(lng, lat, desc = '') {
+  const waypoint = { id: newId(), name: nextName(), lat, lng, color: COLOURS[0], desc, icon: 'marker', created: Date.now() };
+  await save(waypoint);
+  return waypoint;
+}
+
 const formatPosition = (lat, lng) => `${Math.abs(lat).toFixed(5)}° ${lat < 0 ? 'S' : 'N'}, ${Math.abs(lng).toFixed(5)}° ${lng < 0 ? 'W' : 'E'}`;
 
 /** The edit panel for one waypoint. */
 export function edit(waypoint, { fresh = false } = {}) {
   const draft = { ...waypoint };
   openSheet(fresh ? 'New waypoint' : 'Waypoint', (body) => {
+    const here = topSheet();
     const name = el('input', { type: 'text', id: 'wpt-name', value: draft.name, maxLength: 60, autocomplete: 'off', oninput: () => { draft.name = name.value; } });
     const desc = el('textarea', { id: 'wpt-desc', rows: 2, maxLength: 500, value: draft.desc || '', oninput: () => { draft.desc = desc.value; } });
     const lat = el('input', { type: 'text', id: 'wpt-lat', inputMode: 'decimal', value: draft.lat.toFixed(6), oninput: () => { draft.lat = Number(lat.value); } });
@@ -108,7 +128,7 @@ export function edit(waypoint, { fresh = false } = {}) {
         button('Delete', async () => {
           if (!fresh && !(await confirmCard('Delete this waypoint?', `"${waypoint.name}" will be removed from this phone.`, 'Delete', { danger: true }))) return;
           await remove(waypoint);
-          backSheet();
+          backFrom(here);
         }, { danger: true, id: 'wpt-delete' }),
         button('Go to', () => {
           closeSheet();
@@ -121,7 +141,7 @@ export function edit(waypoint, { fresh = false } = {}) {
           }
           Object.assign(waypoint, draft, { name: draft.name.trim() || nextName() });
           await save(waypoint);
-          backSheet();
+          backFrom(here);
         }, { primary: true, id: 'wpt-save' })));
   });
 }

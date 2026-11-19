@@ -4,7 +4,7 @@
 import { setting } from './db.js';
 import { add, card, el, openSheet, heading, note, row, toast } from './ui.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 /** Raise when the wording changes in a way people should agree to again. */
 const TERMS_VERSION = 1;
 const TERMS_URL = 'https://seabathy.com/terms';
@@ -78,15 +78,17 @@ export function openAbout() {
         installPrompt.prompt();
         installPrompt = null;
       }) : null,
-      heading('LOADING CHARTS'),
-      note('Charts: PMTiles files (.pmtiles) with depth shapes, contour lines, depth grids or chart pictures. Surveys: GeoTIFF depth files (.tif). Copy them to the Files app, then Charts, Load a file from this phone.'),
+      heading('GETTING DEPTHS'),
+      note('Menu, Get seabed depths downloads free depths for the area on screen, anywhere in the world, and keeps them on the phone. They work with no signal, and the 3D button flies you over them.'),
+      note('Your own files load too: GeoTIFF depth surveys (.tif), and PMTiles charts (.pmtiles) with depth shapes, contour lines or chart pictures. Copy them to the Files app, then Charts, Load a file from this phone.'),
       note('An MBTiles file must be converted first, on a computer: pmtiles convert chart.mbtiles chart.pmtiles (the free "pmtiles" tool from Protomaps).'),
       heading('PRIVACY'),
       note('Your position, waypoints and charts stay on this phone. The app only talks to the map servers of the maps you turn on, and to any web address you add yourself. They see the usual things a web request shows (your internet address and the area of map asked for). A survey in an unusual map projection makes the app ask epsg.io once for that projection\'s definition.'),
       heading('CREDITS'),
+      note('Seabed depths: GMRT, the Global Multi-Resolution Topography synthesis (Ryan et al. 2009), CC BY 4.0. Not to be used for navigation.'),
       note('Basemaps: OpenFreeMap © OpenMapTiles, data © OpenStreetMap contributors (ODbL). OpenTopoMap (CC-BY-SA). USGS The National Map.'),
       note('Satellite: Sentinel-2 cloudless by EOX IT Services GmbH (https://s2maps.eu), contains modified Copernicus Sentinel data 2024, CC BY-NC-SA 4.0. Daily true colour: NASA Global Imagery Browse Services (GIBS).'),
-      note('Built with MapLibre GL JS and PMTiles (BSD 3-Clause), geotiff.js and proj4js (MIT), and Open Sans (SIL Open Font Licence). SeaBathy itself is under the GNU GPL version 3.'),
+      note('Built with MapLibre GL JS and PMTiles (BSD 3-Clause), three.js, geotiff.js and proj4js (MIT), and Open Sans (SIL Open Font Licence). SeaBathy itself is under the GNU GPL version 3.'),
       row('seabathy.com', 'The Android and Windows apps, and the guide', () => window.open('https://seabathy.com', '_blank', 'noopener')),
       row('Check for an update', 'The app updates itself when you are online', async () => {
         const registration = await navigator.serviceWorker?.getRegistration();

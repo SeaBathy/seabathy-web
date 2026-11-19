@@ -109,7 +109,6 @@ function installSatellite() {
 }
 
 function apply(style, mine, remote) {
-  const camera = { center: map.getCenter(), zoom: map.getZoom() };
   clearTimeout(watchdog);
   pendingRemote = remote;
   map.once('style.load', () => {
@@ -117,8 +116,6 @@ function apply(style, mine, remote) {
     clearTimeout(watchdog);
     pendingRemote = false;
     usingRemoteStyle = remote;
-    // Some styles set their own centre and zoom as they load: the view is put back.
-    map.jumpTo(camera);
     installAnchors();
     installSatellite();
     hooks.installed();

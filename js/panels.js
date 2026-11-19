@@ -8,8 +8,10 @@ import * as files from './files.js';
 import * as waypoints from './waypoints.js';
 import { setting } from './db.js';
 import { PALETTES, drawLegend, normalised, MAX_HILLSHADE_EXAGGERATION } from './depth.js';
-import { add, el, toast, openSheet, refreshSheet, backSheet, closeSheet, row, button, field, heading, note, toggle, slider, confirmCard, progressCard, holdScreenOn, card } from './ui.js';
+import { add, el, toast, openSheet, refreshSheet, topSheet, backFrom, closeSheet, row, button, field, heading, note, toggle, slider, confirmCard, progressCard, holdScreenOn, card } from './ui.js';
 import { openAbout } from './install.js';
+import * as seabed from './seabed.js';
+import * as terrain from './terrain.js';
 
 let map = null;
 
@@ -21,7 +23,7 @@ const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`
 
 function describe(chart) {
   const size = chart.size ? ` · ${files.formatBytes(chart.size)}` : '';
-  if (chart.kind === 'geotiff') return `GeoTIFF depth survey${size}`;
+  if (chart.kind === 'geotiff') return `${/^Seabed /.test(chart.name) ? 'Seabed depths' : 'Depth survey'}${size}`;
   const what = chart.view === 'vector' ? 'Depth chart' : chart.view === 'depth' ? 'Depth grid' : 'Chart picture';
   return chart.where === 'remote' ? `${what}, read from the web` : `${what} on this phone${size}`;
 }
@@ -31,7 +33,8 @@ function describe(chart) {
 export function openMenu() {
   openSheet('SeaBathy', (body) => {
     add(body, 
-      row('Charts', charts.list().length ? plural(charts.list().length, 'chart') : 'Load depth charts and surveys', openCharts, { id: 'menu-charts' }),
+      row('Get seabed depths', 'Free depths for the area on screen, anywhere in the world. They work offline and in 3D', () => seabed.show(map), { id: 'menu-seabed' }),
+      row('Charts', charts.list().length ? plural(charts.list().length, 'chart') : 'Your depth layers, and files of your own', openCharts, { id: 'menu-charts' }),
       row('Maps', `${basemap.basemapById(basemap.state.basemap).label}${basemap.state.satOn ? ' with satellite' : ''}`, openMaps, { id: 'menu-maps' }),
       row('Waypoints', waypoints.list().length ? `${plural(waypoints.list().length, 'waypoint')} saved` : 'Mark spots, back them up as GPX', waypoints.openList, { id: 'menu-waypoints' }),
       row('Save for offline', 'Keep the area on screen for use with no signal', openOffline, { id: 'menu-offline' }),
@@ -100,8 +103,9 @@ function openCharts() {
     const url = el('input', { type: 'url', id: 'chart-url', placeholder: 'https://…/chart.pmtiles', autocomplete: 'off', autocapitalize: 'off', spellcheck: false });
     const list = charts.list();
     add(body, 
-      list.length ? [...list].reverse().map((c) => row(c.name, describe(c), () => openChart(c), { value: c.visible === false ? 'Hidden' : null })) : note('No charts yet. Load a PMTiles chart or a GeoTIFF depth survey from the Files app, or read one from a web address.'),
+      list.length ? [...list].reverse().map((c) => row(c.name, describe(c), () => openChart(c), { value: c.visible === false ? 'Hidden' : null })) : note('Nothing here yet. Get free seabed depths for the area on screen, or load a file of your own.'),
       heading('ADD'),
+      row('Get seabed depths', 'Free, for the area on screen, anywhere in the world', () => seabed.show(map), { id: 'chart-seabed' }),
       row('Load a file from this phone', 'A .pmtiles chart or a .tif depth survey', () => picker.click(), { id: 'chart-load' }),
       picker,
       field('Or read a PMTiles chart from a web address', url),
@@ -134,9 +138,11 @@ function openChart(chart) {
     timer = setTimeout(() => charts.restyle(chart), 160);
   };
   openSheet(chart.name, (body) => {
+    const here = topSheet();
     const coloured = chart.view === 'depth' || (chart.view === 'vector' && chart.depthField);
     add(body, 
       note(describe(chart)),
+      chart.kind === 'geotiff' ? row('See it in 3D', 'Fly over the seabed: height up to 100 times, depth bands, contours, satellite on top', () => terrain.open(chart), { id: 'chart-3d' }) : null,
       toggle('Show on the chart', null, chart.visible !== false, (on) => { chart.visible = on; charts.restyle(chart); basemap.refreshCredits(); }, 'chart-visible'),
       slider('Opacity', { min: 0.1, max: 1, step: 0.05, value: chart.opacity ?? 1, format: (v) => `${Math.round(v * 100)}%`, onInput: (v) => { chart.opacity = v; soon(); }, id: 'chart-opacity' }),
       row('Go to this chart', null, () => { closeSheet(); charts.flyTo(chart); }));
@@ -209,8 +215,7 @@ function openChart(chart) {
     add(body, row('Delete this chart', chart.where === 'remote' ? 'Removes it and its saved areas' : 'Removes the copy kept in the app', async () => {
       if (!(await confirmCard('Delete this chart?', `"${chart.name}" will be removed from the app. The file you loaded it from isn't touched.`, 'Delete', { danger: true }))) return;
       await charts.remove(chart);
-      basemap.refreshCredits();
-      backSheet();
+      backFrom(here);
     }, { danger: true, id: 'chart-delete' }));
   });
 }
@@ -389,7 +394,6 @@ function openStorage() {
       local.length ? local.map((c) => row(c.name, describe(c), async () => {
         if (!(await confirmCard('Delete this chart?', `"${c.name}" will be removed from the app, freeing ${files.formatBytes(c.size)}. The file you loaded it from isn't touched.`, 'Delete', { danger: true }))) return;
         await charts.remove(c);
-        basemap.refreshCredits();
         refreshSheet();
       }, { value: 'Delete', danger: true })) : note('None.'),
       heading('SAVED AREAS'),

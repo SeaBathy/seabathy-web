@@ -182,5 +182,7 @@ export async function writeFixtures(dir) {
   writeFileSync(files.pmtiles, chart.bytes);
   writeFileSync(files.tiff, tiff);
   writeFileSync(files.utm, utm.bytes);
+  // What the tests' stand-in for the seabed depth service sends back.
+  writeFileSync(path.join(dir, 'seabed-service'), tiff);
   return { ...files, tiles: chart.tiles, utmProbe: utm.probe };
 }

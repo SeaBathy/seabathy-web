@@ -10,6 +10,8 @@ import * as basemap from './basemap.js';
 import * as waypoints from './waypoints.js';
 import * as gps from './gps.js';
 import * as panels from './panels.js';
+import * as terrain from './terrain.js';
+import * as seabed from './seabed.js';
 import * as install from './install.js';
 import { $, toast, wireSheet, sheetIsOpen } from './ui.js';
 
@@ -160,10 +162,19 @@ async function boot() {
   map.addControl(new ScaleControl({ unit: 'nautical', maxWidth: 110 }), 'bottom-right');
 
   await offline.start();
-  await charts.start(map, { labelFont: basemap.labelFont, changed: () => {} });
+  // The 3D button comes and goes with the depth surveys on screen.
+  let view3d = null;
+  await charts.start(map, {
+    labelFont: basemap.labelFont,
+    changed: () => {
+      view3d?.changed();
+      basemap.refreshCredits();
+    }
+  });
   await waypoints.start(map);
   gps.begin(map);
   panels.begin(map);
+  view3d = await terrain.start(map);
   await basemap.start(map, {
     installed: () => {
       charts.addAll();
@@ -182,7 +193,7 @@ async function boot() {
   wireReadout(map);
 
   // For the tests, and for looking into a problem from the browser's console.
-  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, version: install.VERSION };
+  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, version: install.VERSION };
   document.body.classList.add('ready');
 
   await install.showInstallIfNeeded();

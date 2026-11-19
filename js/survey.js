@@ -18,6 +18,8 @@ const N = 256;
 const M = N + 2;
 /** A close-in tile is read from the file unless that would take more source cells than this. */
 const MAX_WINDOW_CELLS = 6_000_000;
+/** The same for the 3D view's grid, which is read once and may take a moment. */
+const MAX_REGION_CELLS = 9_000_000;
 const CACHE_TILES = 64;
 const READS_AT_ONCE = 3;
 
@@ -153,7 +155,7 @@ async function describe(file) {
 }
 
 /** The whole survey shrunk to at most [GRID_MAX] cells a side, read in strips. */
-async function readOverview(info, onProgress, signal) {
+async function readOverview(info, onProgress, signal, heights = false) {
   const { tiff, width, height, levels, noData } = info;
   const scale = Math.min(1, GRID_MAX / Math.max(width, height));
   const cols = Math.max(2, Math.round(width * scale));
@@ -192,8 +194,9 @@ async function readOverview(info, onProgress, signal) {
     if (v > max) max = v;
   }
   if (!covered) throw new Error('Every cell in this GeoTIFF is marked as having no data.');
-  // Depths come in both sign conventions. All-positive values are soundings, positive down.
-  const flipped = min >= 0 && max > 0;
+  // Depths come in both sign conventions. All-positive values are soundings, positive down,
+  // unless the file is known to hold heights (an island with no sea round it stays land).
+  const flipped = !heights && min >= 0 && max > 0;
   if (flipped) {
     for (let i = 0; i < values.length; i++) values[i] = -values[i];
     [min, max] = [-max, -min];
@@ -221,8 +224,9 @@ function lonLatBounds(bbox, crs, proj4) {
 /**
  * Brings a GeoTIFF in: checks it, copies it into the app's storage and makes its overview.
  * Answers with what to remember about it. [progress] is { set(fraction, text), signal }.
+ * [heights] says the values are heights above sea level (negative under water) for certain.
  */
-export async function importTiff(file, id, progress) {
+export async function importTiff(file, id, progress, { heights = false } = {}) {
   const { proj4 } = await libs();
   progress.set(0, 'Checking the file…');
   const info = await describe(file);
@@ -233,7 +237,7 @@ export async function importTiff(file, id, progress) {
     // From here on the saved copy is read: the picked file belongs to the picker.
     const saved = await describe(await files.open(fileName));
     progress.set(0.6, 'Reading the depths…');
-    const grid = await readOverview(saved, (f) => progress.set(0.6 + 0.38 * f, 'Reading the depths…'), progress.signal);
+    const grid = await readOverview(saved, (f) => progress.set(0.6 + 0.38 * f, 'Reading the depths…'), progress.signal, heights);
     await files.saveBytes(`${id}.grid`, new Uint8Array(grid.values.buffer), !kept);
     const bounds = lonLatBounds(saved.bbox, saved.crs, proj4);
     const midLat = (bounds[1] + bounds[3]) / 2;
@@ -333,79 +337,81 @@ function sample(values, cols, rows, col, row) {
 }
 
 /**
- * Where each of the tile's M × M cells falls in the file's own coordinates. Longitude and
- * latitude are worked out exactly; a projected file is converted on a 9 × 9 lattice and filled
- * in between, which is far finer than a cell.
+ * Where each cell of a [cols] × [rows] block falls in the file's own coordinates; [lngAt](i)
+ * and [latAt](j) give the block's columns and rows. Longitude and latitude are worked out
+ * exactly; a projected file is converted on a lattice and filled in between, which is far
+ * finer than a cell.
  */
-function sourceCoordinates(meta, fromLonLat, z, x, y) {
-  const sx = new Float64Array(M * M);
-  const sy = new Float64Array(M * M);
-  const lngAt = (i) => tileLng(x + (i + 0.5) / N, z);
-  const latAt = (j) => tileLat(y + (j + 0.5) / N, z);
+function sourceCoordinates(meta, fromLonLat, lngAt, latAt, cols, rows) {
+  const sx = new Float64Array(cols * rows);
+  const sy = new Float64Array(cols * rows);
   if (meta.crs.geographic) {
-    for (let j = 0; j < M; j++) {
-      const lat = latAt(j - 1);
-      for (let i = 0; i < M; i++) {
-        sx[j * M + i] = lngAt(i - 1);
-        sy[j * M + i] = lat;
-      }
+    const lngs = Float64Array.from({ length: cols }, (_, i) => lngAt(i));
+    for (let j = 0; j < rows; j++) {
+      const lat = latAt(j);
+      sx.set(lngs, j * cols);
+      sy.fill(lat, j * cols, (j + 1) * cols);
     }
     return { sx, sy };
   }
-  const L = 9;
+  // A node every 32 cells or so: over a map tile that is 9 a side.
+  const L = Math.max(9, Math.min(65, Math.ceil(Math.max(cols, rows) / 32) + 1));
   const nx = new Float64Array(L * L);
   const ny = new Float64Array(L * L);
+  // Between cells, a column's longitude and a row's latitude run evenly enough to fill in.
+  const between = (at, count, t) => {
+    const i = Math.min(count - 2, Math.floor(t));
+    return at(i) + (at(i + 1) - at(i)) * (t - i);
+  };
   for (let b = 0; b < L; b++) {
+    const lat = between(latAt, rows, (b * (rows - 1)) / (L - 1));
     for (let a = 0; a < L; a++) {
-      const [px, py] = fromLonLat(lngAt(-1 + (a * (M - 1)) / (L - 1)), latAt(-1 + (b * (M - 1)) / (L - 1)));
+      const [px, py] = fromLonLat(between(lngAt, cols, (a * (cols - 1)) / (L - 1)), lat);
       nx[b * L + a] = px;
       ny[b * L + a] = py;
     }
   }
-  for (let j = 0; j < M; j++) {
-    const v = (j * (L - 1)) / (M - 1);
+  for (let j = 0; j < rows; j++) {
+    const v = (j * (L - 1)) / (rows - 1);
     const b0 = Math.min(L - 2, Math.floor(v));
     const fv = v - b0;
-    for (let i = 0; i < M; i++) {
-      const u = (i * (L - 1)) / (M - 1);
+    for (let i = 0; i < cols; i++) {
+      const u = (i * (L - 1)) / (cols - 1);
       const a0 = Math.min(L - 2, Math.floor(u));
       const fu = u - a0;
       const k = b0 * L + a0;
-      sx[j * M + i] = (nx[k] * (1 - fu) + nx[k + 1] * fu) * (1 - fv) + (nx[k + L] * (1 - fu) + nx[k + L + 1] * fu) * fv;
-      sy[j * M + i] = (ny[k] * (1 - fu) + ny[k + 1] * fu) * (1 - fv) + (ny[k + L] * (1 - fu) + ny[k + L + 1] * fu) * fv;
+      sx[j * cols + i] = (nx[k] * (1 - fu) + nx[k + 1] * fu) * (1 - fv) + (nx[k + L] * (1 - fu) + nx[k + L + 1] * fu) * fv;
+      sy[j * cols + i] = (ny[k] * (1 - fu) + ny[k + 1] * fu) * (1 - fv) + (ny[k + L] * (1 - fu) + ny[k + L + 1] * fu) * fv;
     }
   }
   return { sx, sy };
 }
 
-/** The depths under map tile [z, x, y] as M × M metres (negative down), or null when it's empty. */
-async function elevationTile(chart, z, x, y, signal) {
-  const key = `${chart.id}/${z}/${x}/${y}`;
-  if (tileCache.has(key)) {
-    const hit = tileCache.get(key);
-    remember(key, hit);
-    return hit;
-  }
-  const [west, south, east, north] = chart.bounds;
-  if (tileLng(x + 1, z) < west || tileLng(x, z) > east || tileLat(y, z) < south || tileLat(y + 1, z) > north) return null;
-
+/**
+ * The depths (metres, negative down, NaN where there are none) at the places [sx], [sy], given
+ * in the file's own coordinates, [cols] to a row. They are read from the file's level that
+ * suits the spacing of the places, or from the overview when that is fine enough or the read
+ * would take more than [maxCells] of the file. Null when none of the places has a depth.
+ */
+async function readCells(chart, handle, sx, sy, cols, maxCells, signal) {
   const meta = chart.tiff;
-  const handle = await open(chart);
-  const { sx, sy } = sourceCoordinates(meta, handle.fromLonLat, z, x, y);
+  const rows = sx.length / cols;
   const [bx0, by0, bx1, by1] = meta.bbox;
   const spanX = bx1 - bx0;
   const spanY = by1 - by0;
-  // How much of the file's own units one map pixel covers here, across and down.
-  const mid = Math.floor(M / 2) * M;
-  const pixel = Math.max(Math.abs(sx[mid + M - 1] - sx[mid]), Math.abs(sy[(M - 1) * M + M / 2] - sy[M / 2])) / (M - 1);
-  const out = new Float32Array(M * M);
+  // How much of the file's own units one cell of the block covers, across and down.
+  const midRow = Math.floor(rows / 2) * cols;
+  const midCol = Math.floor(cols / 2);
+  const pixel = Math.max(
+    Math.abs(sx[midRow + cols - 1] - sx[midRow]) / (cols - 1),
+    Math.abs(sy[(rows - 1) * cols + midCol] - sy[midCol]) / (rows - 1));
+  const out = new Float32Array(sx.length);
   let any = false;
 
-  // The coarsest of the file's levels that is still as fine as the map needs.
+  // The coarsest of the file's levels that is still as fine as the block needs.
   const level = [...meta.levels].reverse().find((l) => spanX / l.width <= pixel * 1.3) || meta.levels[0];
-  const overviewIsEnough = spanX / meta.cols <= pixel * 1.3;
   let window = null;
-  if (!overviewIsEnough) {
+  if (!(spanX / meta.cols <= pixel * 1.3)) {
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (let i = 0; i < sx.length; i++) {
       if (sx[i] < minX) minX = sx[i];
@@ -417,11 +423,8 @@ async function elevationTile(chart, z, x, y, signal) {
     const c1 = Math.min(level.width, Math.ceil(((maxX - bx0) / spanX) * level.width) + 1);
     const r0 = Math.max(0, Math.floor(((by1 - maxY) / spanY) * level.height) - 1);
     const r1 = Math.min(level.height, Math.ceil(((by1 - minY) / spanY) * level.height) + 1);
-    if (c1 <= c0 || r1 <= r0) {
-      remember(key, null);
-      return null;
-    }
-    if ((c1 - c0) * (r1 - r0) <= MAX_WINDOW_CELLS) window = { c0, r0, c1, r1 };
+    if (c1 <= c0 || r1 <= r0) return null;
+    if ((c1 - c0) * (r1 - r0) <= maxCells) window = { c0, r0, c1, r1 };
   }
 
   if (window) {
@@ -442,16 +445,45 @@ async function elevationTile(chart, z, x, y, signal) {
       if (v === v) any = true;
     }
   } else {
-    const { cols, rows } = meta;
     for (let i = 0; i < out.length; i++) {
-      const v = sample(handle.grid, cols, rows, ((sx[i] - bx0) / spanX) * cols - 0.5, ((by1 - sy[i]) / spanY) * rows - 0.5);
+      const v = sample(handle.grid, meta.cols, meta.rows, ((sx[i] - bx0) / spanX) * meta.cols - 0.5, ((by1 - sy[i]) / spanY) * meta.rows - 0.5);
       out[i] = v;
       if (v === v) any = true;
     }
   }
-  const result = any ? out : null;
+  return any ? out : null;
+}
+
+/** The depths under map tile [z, x, y] as M × M metres (negative down), or null when it's empty. */
+async function elevationTile(chart, z, x, y, signal) {
+  const key = `${chart.id}/${z}/${x}/${y}`;
+  if (tileCache.has(key)) {
+    const hit = tileCache.get(key);
+    remember(key, hit);
+    return hit;
+  }
+  const [west, south, east, north] = chart.bounds;
+  if (tileLng(x + 1, z) < west || tileLng(x, z) > east || tileLat(y, z) < south || tileLat(y + 1, z) > north) return null;
+  const handle = await open(chart);
+  // One cell beyond the tile each way, so its shading meets its neighbours'.
+  const { sx, sy } = sourceCoordinates(chart.tiff, handle.fromLonLat,
+    (i) => tileLng(x + (i - 0.5) / N, z), (j) => tileLat(y + (j - 0.5) / N, z), M, M);
+  const result = await readCells(chart, handle, sx, sy, M, MAX_WINDOW_CELLS, signal);
   remember(key, result);
   return result;
+}
+
+/**
+ * The survey's depths over [bounds] ([west, south, east, north]) as a north-up block of
+ * [cols] × [rows] cells, evenly spaced in longitude and latitude: the 3D view's grid. Null
+ * when the survey has nothing there.
+ */
+export async function sampleRegion(chart, bounds, cols, rows, signal) {
+  const [west, south, east, north] = bounds;
+  const handle = await open(chart);
+  const { sx, sy } = sourceCoordinates(chart.tiff, handle.fromLonLat,
+    (i) => west + ((i + 0.5) / cols) * (east - west), (j) => north - ((j + 0.5) / rows) * (north - south), cols, rows);
+  return readCells(chart, handle, sx, sy, cols, MAX_REGION_CELLS, signal);
 }
 
 /** Map tile [z, x, y] of a survey, coloured by its depth range: a picture, or null when empty. */

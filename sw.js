@@ -4,7 +4,7 @@
 //
 // Raise VERSION with every change to any file in FILES: that is what makes phones fetch the new copy.
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const CACHE = `seabathy-${VERSION}`;
 const FILES = [
   './',
@@ -23,16 +23,30 @@ const FILES = [
   'js/offline.js',
   'js/opfs-worker.js',
   'js/panels.js',
+  'js/seabed.js',
   'js/survey.js',
+  'js/terrain.js',
   'js/tiles.js',
   'js/ui.js',
   'js/waypoints.js',
+  '3d/index.html',
+  '3d/terrain.css',
+  '3d/main.js',
+  '3d/terrain3d.js',
+  '3d/imagery.js',
+  '3d/chunks.js',
+  '3d/contours.js',
+  '3d/grid.js',
+  '3d/palette.js',
   'vendor/geotiff.js',
   'vendor/maplibre-gl.css',
   'vendor/maplibre-gl.js',
   'vendor/maplibre-gl-worker.js',
   'vendor/pmtiles.js',
   'vendor/proj4.js',
+  'vendor/three.module.min.js',
+  'vendor/three-OrbitControls.js',
+  'vendor/three-CSS2DRenderer.js',
   'glyphs/Open Sans Regular/0-255.pbf',
   'icons/apple-touch-icon.png',
   'icons/favicon.svg',

@@ -115,7 +115,8 @@ async function shut(context) {
 }
 
 function watch(page) {
-  page.on('pageerror', (error) => problems.push(`page error: ${error.message}`));
+  // WebKit reports this harmless note about a resize it will handle a frame later as an error.
+  page.on('pageerror', (error) => { if (!/ResizeObserver loop/.test(error.message)) problems.push(`page error: ${error.message}`); });
   page.on('console', (message) => {
     if (message.type() === 'error' && !/Failed to load resource|net::ERR|certificate|openfreemap|eox|openstreetmap|could not connect|offline|ServiceWorker/i.test(message.text())) {
       problems.push(`console: ${message.text().slice(0, 200)}`);
@@ -373,7 +374,120 @@ await step('A GeoTIFF in a UTM projection is placed and read correctly, then del
   return `${info.crs}; depth ${info.depth.toFixed(2)} m where ${probe.depth.toFixed(2)} m was written; zooms in to ${info.maxZoom}`;
 });
 
+await step('Get seabed depths: the area on screen is downloaded and kept as a depth layer', async () => {
+  // The tests' own server stands in for the depth service, and sends back the test survey.
+  await page.evaluate((url) => window.seabathy.seabed.useServer(url), `${DATA}seabed-service`);
+  const requests = () => page.evaluate((prefix) => performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.startsWith(prefix)), `${DATA}seabed-service`);
+  await goTo(page, MID.lng, MID.lat, 10.5);
+  await openMenu(page, 'menu-seabed');
+  expect((await page.locator('.card').innerText()).includes('GMRT'), 'the download was not explained first');
+  await page.click('#seabed-go');
+  await page.waitForFunction(() => window.seabathy.charts.list().length === 3, null, { timeout: LOAD });
+  const info = await page.evaluate(() => {
+    const c = window.seabathy.charts.list().at(-1);
+    return { name: c.name, kind: c.kind, credit: c.attribution, flipped: c.tiff.flipped, min: c.tiff.min, max: c.tiff.max, session: Boolean(c.session), credits: document.querySelector('#credits').textContent };
+  });
+  const seabedAsked = await requests();
+  expect(seabedAsked.length === 1, `the depth service was asked ${seabedAsked.length} times`);
+  const asked = new URL(seabedAsked[0]).searchParams;
+  // What was asked for is the area on screen, round the crosshair.
+  expect(Math.abs((Number(asked.get('north')) + Number(asked.get('south'))) / 2 - MID.lat) < 0.01 && Math.abs((Number(asked.get('east')) + Number(asked.get('west'))) / 2 - MID.lng) < 0.01,
+    `the area asked for was ${seabedAsked[0].split('?')[1]}`);
+  expect(asked.get('format') === 'geotiff' && asked.get('layer') === 'topo', 'the request is not for a depth GeoTIFF');
+  expect(/^Seabed 20\.20S 149\.10E/.test(info.name) && info.kind === 'geotiff', `it was saved as "${info.name}"`);
+  expect(info.credit.includes('GMRT') && info.credits.includes('GMRT'), 'the depth data is not credited on the chart');
+  expect(!info.flipped && info.min < -60 && info.max > -6, `its depths read ${info.min} to ${info.max}`);
+  expect(info.session === !stores, 'the depths were not kept as expected');
+  await page.waitForFunction(() => !document.querySelector('#btn-3d').hidden, null, { timeout: 10000 });
+  // Asking again for the same area goes to the copy on the phone.
+  await goTo(page, MID.lng, MID.lat, 10.5);
+  await openMenu(page, 'menu-seabed');
+  await page.waitForFunction(() => /already on this phone/.test(document.querySelector('#toast').textContent), null, { timeout: 10000 });
+  expect((await requests()).length === 1, 'the same area was downloaded twice');
+  return `${info.name}; ${info.min.toFixed(1)} to ${info.max.toFixed(1)} m`;
+});
+
+await step('3D: the seabed opens in 3D; height, a depth band, colours and a waypoint all work', async () => {
+  await closeSheet(page);
+  // The whole survey on screen and the chart at rest, so 3D opens on all of it.
+  await goTo(page, MID.lng, MID.lat, 9.6);
+  await page.click('#btn-3d');
+  const inside = (work, arg) => page.evaluate(([code, value]) => {
+    const w = document.querySelector('#view3d').contentWindow;
+    return new Function('w', 'd', 'value', `return (${code})(w, d, value)`)(w, w.document, value);
+  }, [work.toString(), arg]);
+  const ready = () => page.waitForFunction(() => {
+    const w = document.querySelector('#view3d')?.contentWindow;
+    return w?.__terrainTest && w.__terrainTest.state().cols > 0 && w.__terrainTest.frames() > 2 && w.document.querySelector('#busy').hidden;
+  }, null, { timeout: LOAD });
+  await ready();
+  const frame = page.frameLocator('#view3d');
+  const first = await inside((w, d) => ({ ...w.__terrainTest.state(), tap: w.__terrainTest.tapCentre(), title: d.querySelector('#title').textContent, info: d.querySelector('#grid-info').textContent, palette: d.querySelector('#palette').value }));
+  expect(first.title.startsWith('Seabed') && /cells/.test(first.info), `the 3D view says "${first.title}" and "${first.info}"`);
+  expect(first.cols >= 128 && first.rows >= 128, `the grid is ${first.cols}×${first.rows}`);
+  expect(first.min < -40 && first.max > -30 && first.min >= -65.5 && first.max <= -4.5, `the grid's depths run ${first.min} to ${first.max}`);
+  expect(first.tap && first.tap.depth <= first.max && first.tap.depth >= first.min, `a tap in the middle read ${JSON.stringify(first.tap)}`);
+  expect(first.palette === 'chart', 'it did not open with the chart\'s own colours');
+  await shot(page, '8-3d');
+
+  // Height: 10 times.
+  await frame.locator('[data-exag="10"]').click();
+  await page.waitForFunction(() => document.querySelector('#view3d').contentWindow.__terrainTest.state().exaggeration === 10, null, { timeout: 10000 });
+
+  // Just the water between 10 and 30 m, reloaded at full detail.
+  await frame.locator('[data-tab="depth"]').click();
+  await frame.locator('#clip-from').fill('-30');
+  await frame.locator('#clip-to').fill('-10');
+  await frame.locator('#clip-to').dispatchEvent('change');
+  await frame.locator('#btn-isolate').click();
+  await page.waitForFunction(() => document.querySelector('#view3d').contentWindow.__terrainTest.state().isolated, null, { timeout: LOAD });
+  await ready();
+  const band = await inside((w) => w.__terrainTest.state());
+  expect(band.min >= -30.05 && band.max <= -9.95 && band.max - band.min > 15, `the 10 to 30 m band holds ${band.min} to ${band.max}`);
+  expect(band.partial, 'the band is not marked as part of the layer');
+
+  // Another palette, and colouring by slope.
+  await frame.locator('[data-tab="colour"]').click();
+  await frame.locator('#palette').selectOption('viridis');
+  await frame.locator('#color-mode').selectOption('slope');
+  await frame.locator('#color-mode').selectOption('depth');
+  const frames = await inside((w) => w.__terrainTest.frames());
+  await page.waitForTimeout(600);
+  await shot(page, '9-3d-band');
+
+  // Back to the whole layer.
+  await frame.locator('[data-tab="depth"]').click();
+  await frame.locator('#btn-show-all').click();
+  await page.waitForFunction(() => document.querySelector('#view3d').contentWindow.__terrainTest.state().isolated === null, null, { timeout: LOAD });
+  await ready();
+
+  // A waypoint dropped on the seabed arrives in the app, with its depth.
+  await frame.locator('#btn-wpt-mode').click();
+  await frame.locator('#view canvas').click({ position: { x: 190, y: 190 } });
+  await page.waitForFunction(() => window.seabathy.waypoints.list().length === 1, null, { timeout: 15000 });
+  const dropped = await page.evaluate(() => window.seabathy.waypoints.list()[0]);
+  expect(/m deep \(from the 3D view\)/.test(dropped.desc) && dropped.lng > 148.9 && dropped.lng < 149.3 && dropped.lat > -20.4 && dropped.lat < -20.0, `the waypoint is ${JSON.stringify(dropped)}`);
+
+  expect(first.partial === false, 'with the whole survey on screen, 3D opened on only part of it');
+  await frame.locator('#btn-close').click();
+  await page.waitForFunction(() => !document.querySelector('#view3d') && !window.SeaBathy3D, null, { timeout: 10000 });
+  // Tidied away for the checks that follow: the waypoint, then the depths.
+  await openMenu(page, 'menu-waypoints');
+  await page.locator('#wpt-list .row').first().click();
+  await page.click('#wpt-delete');
+  await page.click('#confirm-yes');
+  await page.waitForFunction(() => window.seabathy.waypoints.list().length === 0);
+  await openMenu(page, 'menu-charts');
+  await page.locator('#sheet-body .row').first().click();
+  await page.click('#chart-delete');
+  await page.click('#confirm-yes');
+  await page.waitForFunction(() => window.seabathy.charts.list().length === 2, null, { timeout: 10000 });
+  await closeSheet(page);
+  return `${first.cols}×${first.rows} cells, ${first.info.trim()}; a tap read ${first.tap.depth.toFixed(1)} m; band ${band.min.toFixed(1)} to ${band.max.toFixed(1)} m; ${frames} frames drawn`;
+});
+
 await step('A waypoint is added at the crosshair, named and saved', async () => {
+  await page.evaluate(() => window.seabathy.terrain.close());
   await closeSheet(page);
   await page.click('#btn-add');
   await page.waitForSelector('#wpt-name');
@@ -604,7 +718,7 @@ await step('The app\'s own files: all listed for offline use, and one version nu
       } else if (!listed.has(rel) && !/LICENSE/i.test(name)) missing.push(rel);
     }
   };
-  for (const dir of ['js', 'css', 'vendor', 'glyphs', 'icons']) walk(dir);
+  for (const dir of ['js', 'css', 'vendor', 'glyphs', 'icons', '3d']) walk(dir);
   for (const file of ['index.html', 'manifest.json']) if (!listed.has(file)) missing.push(file);
   expect(!missing.length, `not listed for offline use: ${missing.join(', ')}`);
   const versions = [

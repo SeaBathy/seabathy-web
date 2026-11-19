@@ -20,6 +20,19 @@ let wakeLock = null;
 export const isOn = () => watchId !== null;
 export const lastFix = () => last;
 
+const listeners = new Set();
+
+/** Has [fn] called with every position while the GPS is on. Answers with a function that stops it. */
+export function subscribe(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+/** Turns the GPS on if it is off (the 3D view asks for the boat). */
+export function turnOn() {
+  if (!isOn()) start();
+}
+
 /** The accuracy circle as a shape on the chart: [radius] metres round the position. */
 function circle(lng, lat, radius) {
   const ring = [];
@@ -67,6 +80,7 @@ function onFix(position) {
   const first = !last;
   last = position;
   show(position);
+  for (const fn of listeners) fn(position);
   if (following) {
     const center = [position.coords.longitude, position.coords.latitude];
     if (first) map.jumpTo({ center, zoom: Math.max(map.getZoom(), position.coords.accuracy > 500 ? 11 : 14) });
