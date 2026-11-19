@@ -603,9 +603,22 @@ await step('GPS: the boat shows, with speed and accuracy, and the chart follows 
 await step('GPX: export, delete the waypoint, import the file, and it comes back the same', async () => {
   const before = await page.evaluate(() => window.seabathy.waypoints.list()[0]);
   await openMenu(page, 'menu-waypoints');
-  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.click('#gpx-export')]);
   const gpxFile = path.join(workDir, 'data', `exported-${engineName}-${pass}.gpx`);
-  await download.saveAs(gpxFile);
+  // Where the browser has a share sheet for files (a Mac, as on an iPhone), the app hands the
+  // file to it. A test can't tap a share sheet, so it stands in for it and takes the file.
+  const shares = await page.evaluate(() => Boolean(navigator.canShare?.({ files: [new File(['x'], 'x.gpx', { type: 'application/gpx+xml' })] })));
+  if (shares) {
+    await page.evaluate(() => {
+      window.sharedGpx = null;
+      Object.defineProperty(navigator, 'share', { configurable: true, value: async (data) => { window.sharedGpx = await data.files[0].text(); } });
+    });
+    await page.click('#gpx-export');
+    await page.waitForFunction(() => window.sharedGpx, null, { timeout: 20000 });
+    writeFileSync(gpxFile, await page.evaluate(() => window.sharedGpx));
+  } else {
+    const [download] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.click('#gpx-export')]);
+    await download.saveAs(gpxFile);
+  }
   const text = readFileSync(gpxFile, 'utf8');
   expect(text.includes('<gpx version="1.1" creator="SeaBathy"') && text.includes('&amp;') && text.includes('&lt;1&gt;'), 'the GPX file is not as expected');
   await page.locator('#wpt-list .row').first().click();
@@ -621,7 +634,7 @@ await step('GPX: export, delete the waypoint, import the file, and it comes back
   await page.waitForTimeout(700);
   expect(await page.evaluate(() => window.seabathy.waypoints.list().length) === 1, 'importing the same file twice made a copy');
   await closeSheet(page);
-  return `${text.length} bytes of GPX`;
+  return `${text.length} bytes of GPX, ${shares ? "handed to the share sheet" : "saved as a download"}`;
 });
 
 await step('A web chart is read with part-file requests from another site', async () => {
