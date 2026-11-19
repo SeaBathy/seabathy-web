@@ -51,6 +51,12 @@ let profileMode = false;
 // Waypoint key on: each tap on the seabed saves a waypoint there.
 let waypointMode = false;
 let lastTap = null;
+
+/** Puts the depth readout away, and with it the ball that shows where the depth was read. */
+function clearReadout() {
+  $('readout').hidden = true;
+  terrain.setTapMark(null);
+}
 let profileStart = null;
 let lastFix = null;
 /**
@@ -151,13 +157,15 @@ const terrain = new Terrain3D($('view'), {
     $('readout').innerHTML = `<span><b>${depthText(hit.depth)}</b>` +
       (slope === null ? '' : ` · slope ${slope.toFixed(slope < 10 ? 1 : 0)}°`) +
       `<br>${formatDdm(ll.lat, ll.lng)}</span>` +
-      '<button id="readout-close" class="icon small" aria-label="Close depth readout">✕</button>';
+      '<button id="readout-close" aria-label="Clear the depth and its mark on the seabed">Clear</button>';
     $('readout').hidden = false;
+    // A ball on the seabed shows where that depth is.
+    terrain.setTapMark({ col: hit.col, row: hit.row });
     if (waypointMode) bridge.addWaypoint(ll.lat, ll.lng, hit.depth);
   },
-  // Moving the view or tapping off the terrain clears the depth readout.
-  onDragStart: () => { $('readout').hidden = true; },
-  onTapEmpty: () => { $('readout').hidden = true; },
+  // The readout and its ball stay while the view is turned, so the spot can be looked at from
+  // any side. Tapping off the terrain, or the readout's own X, clears both.
+  onTapEmpty: () => clearReadout(),
   // Tapping a pin opens the app's editor: name, notes, Go to, delete.
   onWaypointClick: (id) => {
     if (bridge.editWaypoint) bridge.editWaypoint(id);
@@ -187,7 +195,7 @@ async function loadGrid() {
       fillPalettes();
       colourRange = { lo: Math.min(meta.chart.deep, meta.chart.shallow), hi: Math.max(meta.chart.deep, meta.chart.shallow) };
     }
-    $('readout').hidden = true;
+    clearReadout();
     $('profile').hidden = true;
     $('title').textContent = meta.name;
     showCredit();
@@ -563,7 +571,7 @@ $('btn-save-offline').addEventListener('click', () => {
 });
 
 $('readout').addEventListener('click', (e) => {
-  if (e.target.id === 'readout-close') $('readout').hidden = true;
+  if (e.target.id === 'readout-close') clearReadout();
 });
 
 function setWaypointMode(on) {
@@ -804,7 +812,7 @@ function profileTap(hit) {
   }
   drawProfile(terrain.setProfile(profileStart, hit));
   $('toast').hidden = true;
-  $('readout').hidden = true;
+  clearReadout();
   setProfileMode(false);
 }
 
@@ -888,7 +896,14 @@ window.__terrainTest = {
     const hit = terrain.pick(r.left + r.width / 2, r.top + r.height / 2);
     return hit && { depth: hit.depth };
   },
-  frames: () => terrain.renderCount
+  frames: () => terrain.renderCount,
+  // Where the ball for the last tap is on the screen, or null when there is none.
+  tapMark: () => {
+    const mark = document.querySelector('.tap-mark');
+    if (!mark) return null;
+    const box = mark.getBoundingClientRect();
+    return { x: box.left, y: box.top };
+  }
 };
 // Frames actually drawn, for the performance check.
 window.__perf = {

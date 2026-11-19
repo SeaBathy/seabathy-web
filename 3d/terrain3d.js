@@ -51,6 +51,7 @@ export class Terrain3D {
     this.exaggeration = 3;
     this.active = false;
     this.waypointObjects = [];
+    this.tapMark = null;
     this.pendingHover = null;
 
     // A phone's screen at full resolution with anti-aliasing takes over 100 MB
@@ -166,6 +167,8 @@ export class Terrain3D {
 
   setModel(model) {
     this.#disposeTerrain();
+    // A new grid: the place last tapped is counted in the old one's cells.
+    this.setTapMark(null);
     this.model = model;
     const { cols, rows, values, cellX, cellY, min, max } = model;
     const halfX = ((cols - 1) * cellX) / 2;
@@ -623,6 +626,7 @@ if (uContour > 0.0) {
     this.#updateSun();
     this.#invalidateShadowsSoon();
     this.#placeWaypoints();
+    this.#placeTapMark();
     this.#placeContourLabels();
     this.#placeBoat();
     if (this.profile) this.#drawProfileLine();
@@ -1140,6 +1144,35 @@ if (uContour > 0.0) {
     }
   }
 
+  // ---------------------------------------------------------------- the place tapped
+
+  /**
+   * Shows where the seabed was last tapped: a small ball with a ring round it. Like the
+   * waypoint pins it is drawn on the screen at that point, so it is the same size at any
+   * zoom. point: { col, row } in grid space, or null to take it away.
+   */
+  setTapMark(point) {
+    if (this.tapMark) {
+      this.scene.remove(this.tapMark.label);
+      this.tapMark.label.element.remove();
+      this.tapMark = null;
+    }
+    if (!point || !this.mesh || sampleGrid(this.model, point.col, point.row) === null) return;
+    const mark = document.createElement('div');
+    mark.className = 'tap-mark';
+    mark.innerHTML = '<span class="tap-ring"></span><span class="tap-ball"></span>';
+    const label = new CSS2DObject(mark);
+    this.scene.add(label);
+    this.tapMark = { col: point.col, row: point.row, label };
+    this.#placeTapMark();
+  }
+
+  #placeTapMark() {
+    if (!this.tapMark) return;
+    const base = this.#gridToWorld(this.tapMark.col, this.tapMark.row);
+    if (base) this.tapMark.label.position.copy(base);
+  }
+
   // ---------------------------------------------------------------- boat
 
   /**
@@ -1460,7 +1493,7 @@ if (uContour > 0.0) {
     const shadowChanging = new Set(['setModel', 'setSun', 'setShadows', 'setClip']);
     const redrawing = ['setModel', 'setPalette', 'setContourInterval', 'setExaggeration', 'setSun', 'setShadows',
       'setSeaSurface', 'setAutoRotate', 'setClip', 'setImagery', 'setDrapeMix', 'setContourLabels', 'refreshContourLabelVisibility',
-      'setColorMode', 'setWaypoints', 'setBoat', 'setFollowBoat', 'cameraPreset', 'face', 'focusOn', 'focusGrid',
+      'setColorMode', 'setWaypoints', 'setTapMark', 'setBoat', 'setFollowBoat', 'cameraPreset', 'face', 'focusOn', 'focusGrid',
       'setProfile', 'clearProfile'];
     for (const name of redrawing) {
       const original = this[name];

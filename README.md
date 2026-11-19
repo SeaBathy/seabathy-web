@@ -1,7 +1,7 @@
 # SeaBathy web app
 
 ![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
-![Version 0.3.5](https://img.shields.io/badge/version-0.3.5-informational)
+![Version 0.3.6](https://img.shields.io/badge/version-0.3.6-informational)
 ![Works offline](https://img.shields.io/badge/works-offline-success)
 ![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
 
@@ -122,10 +122,11 @@ The screen is laid out as the Android app's is.
 
 <img src="screenshots/3d-controls.jpg" alt="The 3D view's options" width="300"> <img src="screenshots/3d-depth-band.jpg" alt="Only the water between 20 and 45 m" width="300">
 
-Tap **3D** on the chart while depths are on screen (or **See it in 3D** on a depth layer).
+Tap **3D** on the chart while depths are on screen (or **3D view** on a depth layer in the Layers panel).
 The viewer is the Android app's own:
 
-- One finger rotates, two fingers pan and zoom, double-tap flies in. Tap for the depth and slope.
+- One finger rotates, two fingers pan and zoom, double-tap flies in. Tap the seabed for the depth
+  and slope there: a ball marks the spot and stays while you turn the view, until you tap **Clear**.
 - **View:** height from true scale (1:1) to 100×, camera presets, a depth profile between two
   taps, the boat from GPS.
 - **Depth:** show just a depth band, such as 10 to 30 m, and **Isolate & zoom** to reload that

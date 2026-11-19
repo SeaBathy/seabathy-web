@@ -792,6 +792,32 @@ await step('3D: the seabed opens in 3D; height, a depth band, colours and a wayp
   await page.waitForFunction(() => document.querySelector('#view3d').contentWindow.__terrainTest.state().isolated === null, null, { timeout: LOAD });
   await ready();
 
+  // A tap on the seabed reads the depth and puts a ball there, which stays while the view is turned and goes with the readout.
+  await frame.locator('#view canvas').click({ position: { x: 190, y: 190 } });
+  const corner = await inside((w, d) => { const box = d.querySelector('#view canvas').getBoundingClientRect(); return { x: box.left, y: box.top }; });
+  const ballAt = () => inside((w) => w.__terrainTest.tapMark());
+  const onSpot = (ball) => Boolean(ball) && Math.abs(ball.x - (corner.x + 190)) < 4 && Math.abs(ball.y - (corner.y + 190)) < 4;
+  let ball = null;
+  for (let i = 0; i < 50 && !onSpot(ball); i++) {
+    await page.waitForTimeout(100);
+    ball = await ballAt();
+  }
+  expect(onSpot(ball), `the ball is at ${JSON.stringify(ball)}, not where the seabed was tapped (${corner.x + 190}, ${corner.y + 190})`);
+  expect(await inside((w, d) => !d.querySelector('#readout').hidden && /[0-9] m/.test(d.querySelector('#readout').textContent)), 'the depth is not shown with the ball');
+  await shot(page, '8c-3d-tap');
+  const view = await page.locator('#view3d').boundingBox();
+  // The drag starts on the seabed, clear of the readout and the options below.
+  await page.mouse.move(view.x + 60, view.y + 240);
+  await page.mouse.down();
+  await page.mouse.move(view.x + 150, view.y + 255, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const turned = await ballAt();
+  expect(turned && await inside((w, d) => !d.querySelector('#readout').hidden), 'turning the view took the ball or the depth away');
+  expect(!onSpot(turned), 'the ball did not move with the seabed when the view was turned');
+  await frame.locator('#readout-close').click();
+  expect(await ballAt() === null, 'the ball stayed after the readout was closed');
+
   // A waypoint dropped on the seabed arrives in the app, with its depth.
   await frame.locator('#btn-wpt-mode').click();
   await frame.locator('#view canvas').click({ position: { x: 190, y: 190 } });
