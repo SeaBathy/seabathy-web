@@ -1,0 +1,15 @@
+{
+  "name": "seabathy-pwa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SeaBathy web app. The app itself has no build step: this file is only for the tests.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "serve": "node tests/server.mjs",
+    "test": "node tests/run.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.65.1"
+  }
+}

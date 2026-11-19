@@ -1,0 +1,34 @@
+name: Tests
+
+# Runs the app's tests in WebKit (Safari's engine) on a Mac, the closest thing to an iPhone that
+# can be automated. WebKit on a Mac has what the Windows build lacks: file storage that can be
+# written to, and a service worker in a kept profile.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  webkit:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install webkit
+      - run: npm test
+      - name: Keep the pictures the tests took
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-pictures
+          path: tests/.work/shots
+          if-no-files-found: ignore
