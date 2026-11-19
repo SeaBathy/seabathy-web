@@ -17,7 +17,7 @@ const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml',
   '.pbf': 'application/x-protobuf', '.pmtiles': 'application/octet-stream', '.tif': 'image/tiff', '.gpx': 'application/gpx+xml',
-  '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8'
+  '.txt': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.geojson': 'application/geo+json'
 };
 
 /** A certificate for localhost that this computer signs for itself, made once with openssl. */

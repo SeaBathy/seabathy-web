@@ -660,7 +660,7 @@ await step('A download that fails says why: a server that does not answer is not
     await pickerReady(page);
     await page.click('#area-go');
     await page.waitForSelector('#seabed-failed-ok', { timeout: 60000 });
-    const said = await page.locator('.card').innerText();
+    const said = `${await page.locator('.card').innerText()} [link: ${await page.locator('#seabed-check').count() ? await page.locator('#seabed-check').getAttribute('href') : 'none'}]`;
     await page.click('#seabed-failed-ok');
     await page.waitForFunction(() => !document.querySelector('.overlay'));
     return said;
@@ -668,7 +668,9 @@ await step('A download that fails says why: a server that does not answer is not
   // Nothing listens at this address: the request never gets an answer, and is tried twice.
   const silent = await attempt('https://localhost:59999/nothing');
   expect(/IMAS's server did not answer/.test(silent) && /internet may be fine/.test(silent) && !/no internet|offline/i.test(silent), `with no answer the app said: ${silent.replace(/\s+/g, ' ')}`);
-  expect(/geoserver\.imas\.utas\.edu\.au/.test(silent) && /The browser said: /.test(silent), `the card gives nothing to check with: ${silent.replace(/\s+/g, ' ')}`);
+  // The card gives a link that really tests the server (a picture it draws), not its front page, which is an error page.
+  expect(/test picture/.test(silent) && /\[link: https:\/\/geoserver\.imas\.utas\.edu\.au\/geoserver\/bathy_composites\/wms\?.*GetMap/.test(silent) && !/geoserver\/web/.test(silent) && /The browser said: /.test(silent),
+    `the card gives nothing to check with: ${silent.replace(/\s+/g, ' ')}`);
   // An address that answers, but not with depths.
   const wrong = await attempt(`${DATA}no-such-service`);
   expect(/IMAS's server answered 404/.test(wrong), `to a "404" the app said: ${wrong.replace(/\s+/g, ' ')}`);
@@ -991,6 +993,210 @@ await step('Storage: the space used is shown, and deleting a chart frees its fil
   return usage;
 }, stores);
 
+await step('A hidden layer comes off the chart and frees its memory, and draws again when shown', async () => {
+  await only(page, 'all');
+  await goTo(page, MID.lng, MID.lat, 10);
+  const all = await charts(page);
+  const chart = all.find((c) => c.kind === 'geotiff') || all[0];
+  const onMap = () => page.evaluate((id) => Boolean(window.seabathy.map.getSource(`chart-${id}`)), chart.id);
+  const held = () => page.evaluate(async (id) => (await import('./js/survey.js')).held().includes(id), chart.id);
+  if (chart.kind === 'geotiff') {
+    await page.waitForFunction(async (id) => (await import('./js/survey.js')).held().includes(id), chart.id, { timeout: 30000 });
+  }
+  expect(await onMap(), 'the layer is not on the chart to begin with');
+  // Switched off in its own panel.
+  await openMenu(page, 'menu-charts');
+  await page.locator('#sheet-body .row', { hasText: chart.name }).first().click();
+  await page.click('#chart-visible');
+  await page.waitForFunction((id) => !window.seabathy.map.getSource(`chart-${id}`), chart.id, { timeout: 10000 });
+  expect(!(await held()), 'the hidden survey is still held open in memory');
+  expect(await page.evaluate((id) => window.seabathy.map.getStyle().layers.every((l) => l.source !== `chart-${id}`), chart.id), 'layers of the hidden chart are still on the map');
+  await page.evaluate(() => document.querySelector('#sheet-back').click());
+  expect((await page.locator('#sheet-body .row', { hasText: chart.name }).first().innerText()).includes('Hidden'), 'the list does not show it as hidden');
+  // And on again: it is opened afresh and drawn.
+  await page.locator('#sheet-body .row', { hasText: chart.name }).first().click();
+  await page.click('#chart-visible');
+  await closeSheet(page);
+  await page.waitForFunction((id) => window.seabathy.map.getSource(`chart-${id}`) && window.seabathy.map.isSourceLoaded(`chart-${id}`), chart.id, { timeout: 30000 });
+  if (chart.kind === 'geotiff') await page.waitForFunction(async (id) => (await import('./js/survey.js')).held().includes(id), chart.id, { timeout: 30000 });
+  return `${chart.name}: off the chart and ${chart.kind === 'geotiff' ? 'its file closed' : 'no layers left'} while hidden, drawn again when shown`;
+});
+
+await step('Marine parks and places: zones, reef and island names and boat ramps switch on, say what they are when tapped, and are credited', async () => {
+  const credits = () => page.locator('#credits').innerText();
+  const count = (layer) => page.evaluate((id) => (window.seabathy.map.getLayer(id) ? window.seabathy.map.queryRenderedFeatures({ layers: [id] }).length : -1), layer);
+  const shown = (layer, least) => page.waitForFunction(([id, n]) => {
+    const map = window.seabathy.map;
+    return map.getLayer(id) && map.queryRenderedFeatures({ layers: [id] }).length >= n;
+  }, [layer, least], { timeout: 90000 });
+  const tapCard = async (x, y) => {
+    await page.mouse.click(x, y);
+    await page.waitForSelector('#place-close', { timeout: 10000 });
+    const said = await page.locator('.card').innerText();
+    await page.click('#place-close');
+    await page.waitForFunction(() => !document.querySelector('.overlay'));
+    return said;
+  };
+  // The Whitsundays: marine park zones, named islands and numbered reefs.
+  await goTo(page, 148.95, -20.25, 10);
+  expect(await count('sb-over-names') === -1 && !(await credits()).includes('Names:'), 'names are on before they are switched on');
+
+  // Names.
+  await openMenu(page, 'menu-places');
+  await page.click('#places-names');
+  await closeSheet(page);
+  await shown('sb-over-names', 4);
+  expect((await credits()).includes('Names: Geoscience Australia'), 'the names are not credited on the chart');
+  const named = await page.evaluate(() => {
+    const map = window.seabathy.map;
+    for (const f of map.queryRenderedFeatures({ layers: ['sb-over-names'] })) {
+      const p = map.project(f.geometry.coordinates);
+      if (p.x > 70 && p.x < 320 && p.y > 140 && p.y < 520) return { name: f.properties.n, x: p.x, y: p.y };
+    }
+    return null;
+  });
+  expect(named, 'no name is drawn where it can be tapped');
+  const nameCard = await tapCard(named.x, named.y);
+  expect(nameCard.includes(named.name) && nameCard.includes('Geoscience Australia'), `a tap on "${named.name}" said: ${nameCard.replace(/\s+/g, ' ')}`);
+  await shot(page, '7b-names');
+
+  // Zones: the notice first, once; then every zone, then the no-take ones alone.
+  await openMenu(page, 'menu-places');
+  await page.click('#zones-all');
+  await page.waitForSelector('#places-ack');
+  expect((await page.locator('.card').innerText()).includes('the law'), 'the notice does not say the official zoning is the law');
+  await page.click('#places-ack');
+  await closeSheet(page);
+  await shown('sb-over-zones-fill', 1);
+  expect((await credits()).includes('Marine park zones:'), 'the zones are not credited on the chart');
+  const inZone = await page.evaluate(() => {
+    const map = window.seabathy.map;
+    for (let y = 150; y < 520; y += 20) {
+      for (let x = 80; x < 320; x += 20) {
+        const zones = map.queryRenderedFeatures([x, y], { layers: ['sb-over-zones-fill'] });
+        const near = map.queryRenderedFeatures([[x - 30, y - 30], [x + 30, y + 30]], { layers: ['sb-over-names'] });
+        if (zones.length && !near.length) return { x, y, classes: zones.map((z) => z.properties.c) };
+      }
+    }
+    return null;
+  });
+  expect(inZone, 'no zone is drawn where it can be tapped');
+  const zoneCard = await tapCard(inZone.x, inZone.y);
+  expect(/No-take zone|Limited fishing|General use/i.test(zoneCard) && /Fishing: /.test(zoneCard) && zoneCard.includes('A guide only'), `a tap in a zone said: ${zoneCard.replace(/\s+/g, ' ')}`);
+  // The strictest zone under the finger is the one described.
+  if (inZone.classes.includes('nt')) expect(/No-take zone/i.test(zoneCard), 'the strictest zone was not the one described');
+  await shot(page, '7c-zones');
+  // The satellite picture, when on, lies under the zones and names.
+  const order = await page.evaluate(async () => {
+    await window.seabathy.basemap.setSatellite({ satOn: true });
+    const ids = window.seabathy.map.getStyle().layers.map((l) => l.id);
+    await window.seabathy.basemap.setSatellite({ satOn: false });
+    return { sat: ids.indexOf('sb-sat'), zones: ids.indexOf('sb-over-zones-fill'), names: ids.indexOf('sb-over-names') };
+  });
+  expect(order.sat >= 0 && order.sat < order.zones && order.zones < order.names, `the layers are stacked ${JSON.stringify(order)}`);
+  await openMenu(page, 'menu-places');
+  await page.click('#zones-notake');
+  await closeSheet(page);
+  expect(JSON.stringify(await page.evaluate(() => window.seabathy.map.getFilter('sb-over-zones-fill'))) === JSON.stringify(['==', ['get', 'c'], 'nt']), 'no-take only does not leave out the other zones');
+
+  // The warning on the way into a no-take zone, and the word on the way out.
+  const spot = await page.evaluate(async () => {
+    const data = await (await fetch('data/zones.geojson')).json();
+    for (const feature of data.features) {
+      if (feature.properties.c !== 'nt') continue;
+      const ring = (feature.geometry.type === 'Polygon' ? feature.geometry.coordinates : feature.geometry.coordinates[0])[0];
+      const lng = ring.reduce((sum, p) => sum + p[0], 0) / ring.length;
+      const lat = ring.reduce((sum, p) => sum + p[1], 0) / ring.length;
+      if (await window.seabathy.places.noTakeAt(lat, lng)) return { lat, lng, park: feature.properties.n };
+    }
+    return null;
+  });
+  expect(spot, 'no point inside a no-take zone was found');
+  expect(await page.evaluate(() => window.seabathy.places.noTakeAt(-30, 160)) === null, 'open sea far from any park counts as a no-take zone');
+  // WebKit on Windows never reports a changed position, so there the app is told the boat's place directly.
+  const boatTo = async (latitude, longitude) => {
+    if (windowsWebkit) await page.evaluate(([lat, lng]) => { window.seabathy.places.boatAt({ coords: { latitude: lat, longitude: lng } }); }, [latitude, longitude]);
+    else await context.setGeolocation({ latitude, longitude, accuracy: 5 });
+  };
+  await boatTo(spot.lat, spot.lng);
+  if (!windowsWebkit && !(await page.evaluate(() => window.seabathy.gps.isOn()))) await page.click('#btn-gps');
+  await page.waitForSelector('#notake-ok', { timeout: 30000 });
+  const warning = await page.locator('.card').innerText();
+  expect(/You're in a no-take zone/.test(warning) && warning.includes(spot.park), `the warning said: ${warning.replace(/\s+/g, ' ')}`);
+  await shot(page, '7d-no-take');
+  await page.click('#notake-ok');
+  await boatTo(-30, 160);
+  await page.waitForFunction(() => /left the no-take zone/.test(document.querySelector('#toast').textContent) && !document.querySelector('#toast').hidden, null, { timeout: 30000 });
+  await page.evaluate(() => { for (let i = 0; i < 3 && window.seabathy.gps.isOn(); i++) window.seabathy.gps.tap(); });
+  await context.setGeolocation(FIX);
+
+  // Boat ramps, by the mainland.
+  await openMenu(page, 'menu-places');
+  await page.click('#places-ramps');
+  await closeSheet(page);
+  await goTo(page, 148.72, -20.27, 11);
+  await shown('sb-over-ramps', 1);
+  expect((await credits()).includes('Boat ramps: © OpenStreetMap'), 'the ramps are not credited on the chart');
+  const ramp = await page.evaluate(() => {
+    const map = window.seabathy.map;
+    for (const f of map.queryRenderedFeatures({ layers: ['sb-over-ramps'] })) {
+      const p = map.project(f.geometry.coordinates);
+      if (p.x > 70 && p.x < 320 && p.y > 140 && p.y < 520) return { x: p.x, y: p.y };
+    }
+    return null;
+  });
+  if (ramp) expect(/Boat ramp/i.test(await tapCard(ramp.x, ramp.y)), 'a tap on a ramp did not say it is one');
+  // Once fetched, each file is kept for use with no signal.
+  const keptNow = () => page.evaluate(async () => (await (await caches.open('seabathy-data-1')).keys()).map((r) => r.url.split('/').pop()).sort().join());
+  // The file just fetched may take a moment to show up as kept.
+  if (worker) await page.waitForFunction(async () => (await (await caches.open('seabathy-data-1')).keys()).length >= 3, null, { timeout: 15000 }).catch(() => {});
+  const keptFiles = worker ? await keptNow() : 'not checked';
+  if (worker) expect(keptFiles === 'places.geojson,ramps.geojson,zones.geojson', `kept for offline use: ${keptFiles || 'nothing'}`);
+  // All off again: nothing left on the chart or in the credits.
+  await openMenu(page, 'menu-places');
+  await page.click('#zones-off');
+  await page.click('#places-names');
+  await page.click('#places-ramps');
+  await closeSheet(page);
+  expect(await count('sb-over-zones-fill') === -1 && await count('sb-over-names') === -1 && await count('sb-over-ramps') === -1, 'something is still on the chart after switching everything off');
+  expect(!/Names:|Marine park zones:|Boat ramps:/.test(await credits()), 'credits remain for layers that are off');
+  await goTo(page, MID.lng, MID.lat, 10);
+  return `"${named.name}" named; zone card and the no-take warning in ${spot.park}; ${ramp ? 'a ramp tapped' : 'ramps drawn'}; data kept: ${keptFiles}`;
+});
+
+await step('Settings: depths in feet or fathoms and speed in other units, at the crosshair and for 3D', async () => {
+  await only(page, 'all');
+  await goTo(page, MID.lng, MID.lat, 10);
+  const depthShown = async () => {
+    await page.waitForFunction(() => !document.querySelector('#readout-depth').hidden, null, { timeout: 20000 });
+    return page.locator('#readout-depth').innerText();
+  };
+  const metres = await depthShown();
+  expect(/ m\b/.test(metres), `the crosshair depth reads "${metres}"`);
+  await openMenu(page, 'menu-settings');
+  await page.click('#unit-depth-ft');
+  await page.click('#unit-speed-kmh');
+  await closeSheet(page);
+  await page.waitForFunction(() => / ft\b/.test(document.querySelector('#readout-depth').textContent), null, { timeout: 10000 });
+  const feet = await depthShown();
+  expect(Math.abs(parseFloat(feet) - parseFloat(metres) * 3.28084) < 1.5, `${metres} became ${feet}`);
+  const told = await page.evaluate(() => ({ speed: window.seabathy.units.speedText(10), depth: window.seabathy.units.depthText(-18.288), land: window.seabathy.units.depthText(3) }));
+  expect(told.speed === '18.5 km/h' && told.depth === '60.0 ft' && told.land === '9.8 ft above the water', `units gave ${JSON.stringify(told)}`);
+  // The choice is kept, and metres and knots come back.
+  expect(JSON.stringify(await page.evaluate(() => window.seabathy.db.setting.get('units'))) === JSON.stringify({ depth: 'ft', speed: 'kmh' }), 'the units were not kept');
+  await openMenu(page, 'menu-settings');
+  await page.click('#unit-depth-fm');
+  await closeSheet(page);
+  await page.waitForFunction(() => / fm\b/.test(document.querySelector('#readout-depth').textContent), null, { timeout: 10000 });
+  const fathoms = await depthShown();
+  await openMenu(page, 'menu-settings');
+  await page.click('#unit-depth-m');
+  await page.click('#unit-speed-kn');
+  await closeSheet(page);
+  await page.waitForFunction(() => / m\b/.test(document.querySelector('#readout-depth').textContent), null, { timeout: 10000 });
+  return `${metres} = ${feet} = ${fathoms}`;
+});
+
 await step('Install: the menu offers it, with one tap where the browser makes an offer and the steps for every other browser', async () => {
   await openMenu(page, 'menu-install');
   const said = await page.locator('#sheet-body').innerText();
@@ -1078,7 +1284,7 @@ await step('Updates: "ask first" waits for a tap, "automatic" switches at the ne
   swap.set('/sw.js', sw.replace(`const VERSION = '${current}'`, "const VERSION = '9.9.0'"));
   expect(await page.evaluate(() => window.seabathy.updates.check()) === 'latest', 'a half-published release was taken');
   expect(await page.locator('#update').isHidden() && await inCharge() === current, 'a half-published release is offered or in charge');
-  expect((await page.evaluate(() => caches.keys())).filter((n) => n.startsWith('seabathy-')).join() === `seabathy-${current}`, 'a half-published release left files behind');
+  expect((await page.evaluate(() => caches.keys())).filter((n) => /^seabathy-\d/.test(n)).join() === `seabathy-${current}`, 'a half-published release left files behind');
 
   // Ask first: found from About, and nothing changes on "Cancel".
   newer('9.9.1');
@@ -1098,7 +1304,7 @@ await step('Updates: "ask first" waits for a tap, "automatic" switches at the ne
   await until('the app did not open again after the tap', reopened);
   expect(await inCharge() === '9.9.1', 'the new version did not take over after the tap');
   expect(await page.locator('#update').isHidden(), 'the bar is still there after the update');
-  expect((await page.evaluate(() => caches.keys())).filter((n) => n.startsWith('seabathy-')).join() === 'seabathy-9.9.1', 'the old copy of the app was not cleared away');
+  expect((await page.evaluate(() => caches.keys())).filter((n) => /^seabathy-\d/.test(n)).join() === 'seabathy-9.9.1', 'the old copy of the app was not cleared away');
 
   // Automatic: fetched quietly, and used from the next start.
   await page.evaluate(() => window.seabathy.updates.setMode('auto'));

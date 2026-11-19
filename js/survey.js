@@ -292,7 +292,10 @@ function open(chart) {
   return opened.get(chart.id);
 }
 
-/** Forgets a survey's open file and tiles (it was deleted). */
+/** The surveys now held open in memory, by id. */
+export const held = () => [...opened.keys()];
+
+/** Forgets a survey's open file and tiles (it was deleted or hidden). */
 export function close(id) {
   opened.delete(id);
   for (const key of [...tileCache.keys()]) if (key.startsWith(`${id}/`)) tileCache.delete(key);

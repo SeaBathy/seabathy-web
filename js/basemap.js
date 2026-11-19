@@ -105,7 +105,9 @@ function installSatellite() {
   if (!state.satOn) return;
   const preset = satelliteById(state.satId);
   map.addSource('sb-sat', { type: 'raster', tiles: [address('s', preset.id)], tileSize: 256, maxzoom: preset.maxZoom });
-  map.addLayer({ id: 'sb-sat', type: 'raster', source: 'sb-sat', paint: { 'raster-opacity': state.satOpacity, 'raster-fade-duration': 0 } }, TOP);
+  // Under the zones, names and ramps (layers named "sb-over-…") when any of them is on.
+  const over = map.getStyle().layers.find((layer) => layer.id.startsWith('sb-over-'));
+  map.addLayer({ id: 'sb-sat', type: 'raster', source: 'sb-sat', paint: { 'raster-opacity': state.satOpacity, 'raster-fade-duration': 0 } }, over ? over.id : TOP);
 }
 
 function apply(style, mine, remote) {

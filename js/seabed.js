@@ -12,7 +12,7 @@
 import * as charts from './charts.js';
 import * as files from './files.js';
 import { pickArea } from './areapicker.js';
-import { card, toast, progressCard, holdScreenOn, closeSheet, loadScript } from './ui.js';
+import { card, el, toast, progressCard, holdScreenOn, closeSheet, loadScript } from './ui.js';
 
 export const SEABED_CREDIT = 'Depths: GMRT, Ryan et al. 2009 (CC BY 4.0)';
 export const HIGH_DETAIL_CREDIT = 'Depths: IMAS multi-resolution bathymetry composite, Flukes 2026 (CC BY 4.0)';
@@ -155,13 +155,35 @@ function serverSaid(bytes) {
   return said.replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
-/** A failure whose message is for the person as it stands; [detail] is the small print under it. */
+/**
+ * A failure whose message is for the person as it stands. [check] is a link they can open to
+ * see for themselves whether this device reaches the server, and [detail] the small print.
+ */
 class Told extends Error {
-  constructor(message, detail = '') {
+  constructor(message, { check = null, detail = '' } = {}) {
     super(message);
+    this.check = check;
     this.detail = detail;
   }
 }
+
+/**
+ * Links that show whether a device can reach each depth server at all. IMAS's server has no
+ * front page to open (its plain address answers with an error page even when all is well), so
+ * its check is a small picture of the seabed that it draws on request.
+ */
+const CHECKS = {
+  imas: {
+    url: 'https://geoserver.imas.utas.edu.au/geoserver/bathy_composites/wms?service=WMS&version=1.1.1&request=GetMap&layers=bathy_composites:AusEEZ_bathy_composite_multires&bbox=148.8,-20.2,149.1,-19.9&width=400&height=400&srs=EPSG:4326&format=image/png',
+    label: "Open a test picture from IMAS's server",
+    means: 'A small coloured picture of the seabed means this device can reach the server. An error, or a page that never finishes loading, means this connection can\'t.'
+  },
+  gmrt: {
+    url: 'https://www.gmrt.org/',
+    label: 'Open the GMRT website',
+    means: 'If the website opens, this device can reach GMRT. An error, or a page that never finishes loading, means this connection can\'t.'
+  }
+};
 
 /** A server that hasn't started to answer by now isn't going to. */
 const ANSWER_TIMEOUT_MS = 120000;
@@ -173,7 +195,7 @@ const capital = (text) => text[0].toUpperCase() + text.slice(1);
  * reason given is the real one: a phone that is offline, a server that is slow, or a request
  * that never got an answer (which is not the same as having no internet).
  */
-async function ask(url, who, site, progress, asking) {
+async function ask(url, who, check, progress, asking) {
   for (let attempt = 1; ; attempt++) {
     const waiting = new AbortController();
     const timer = setTimeout(() => waiting.abort(), ANSWER_TIMEOUT_MS);
@@ -184,11 +206,11 @@ async function ask(url, who, site, progress, asking) {
     } catch (error) {
       if (progress.signal.aborted) throw error;
       if (!navigator.onLine) throw new Told('This device is offline. The depths need the internet to download.');
-      if (waiting.signal.aborted) throw new Told(`${capital(who)} took too long to answer. It may be busy: try again in a few minutes, or draw a smaller box.`);
+      if (waiting.signal.aborted) throw new Told(`${capital(who)} took too long to answer. It may be busy: try again in a few minutes, or draw a smaller box.`, { check });
       if (attempt >= 2) {
         throw new Told(
-          `${capital(who)} did not answer. Your internet may be fine: the server may be down for a moment, or something between you and it is stopping the request, such as a work or public network, a VPN or an ad blocker. Try again in a few minutes.`,
-          `To check, open ${site} in this browser. If that page doesn't load either, this connection can't reach the server. (The browser said: ${String(error?.message || error).slice(0, 80)}.)`);
+          `${capital(who)} did not answer. Your internet may be fine: the server may be down for a moment, or something on this device or its connection is stopping the request, such as a VPN, security software, an ad blocker or a work or public network. Try again in a few minutes.`,
+          { check, detail: `The browser said: ${String(error?.message || error).slice(0, 80)}.` });
       }
       progress.set(null, `No answer from ${who}. Trying once more…`);
       await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS));
@@ -200,12 +222,12 @@ async function ask(url, who, site, progress, asking) {
   }
 }
 
-async function download({ url, name, title, credit, asking, noData, who, site }) {
+async function download({ url, name, title, credit, asking, noData, who, check }) {
   const progress = progressCard(title, 'Keep SeaBathy open and on screen until this finishes.');
   const letSleep = await holdScreenOn();
   try {
     progress.set(null, asking);
-    const response = await ask(url, who, site, progress, asking);
+    const response = await ask(url, who, check, progress, asking);
     if (response.status === 429 || response.status >= 500) throw new Told(`${capital(who)} is busy or having trouble just now (it answered ${response.status}). Try again in a few minutes.`);
     // A map server explains a refusal in the body of a "400"; anything else is a failure.
     if (!response.ok && response.status !== 400) throw new Told(`${capital(who)} answered ${response.status}, not the depths. Try again later.`);
@@ -226,7 +248,7 @@ async function download({ url, name, title, credit, asking, noData, who, site })
       }
     } catch (error) {
       if (progress.signal.aborted) throw error;
-      throw new Told(`The download from ${who} was cut off part-way (${files.formatBytes(got)} had arrived). Check the connection and try again.`);
+      throw new Told(`The download from ${who} was cut off part-way (${files.formatBytes(got)} had arrived). Check the connection and try again.`, { check });
     }
     if (!parts.length || !looksLikeTiff(parts[0])) {
       const said = parts.length ? serverSaid(parts[0]) : '';
@@ -258,8 +280,15 @@ async function download({ url, name, title, credit, asking, noData, who, site })
       const why = files.isFull(error) ? 'This device has no room for these depths. Free up space, or delete a layer under Storage.'
         : error instanceof Told ? error.message
           : `Something went wrong while loading the depths${error?.message ? `: ${error.message}` : '.'}`;
+      const test = error instanceof Told ? error.check : null;
       card({
-        title: "Couldn't get the depths", paragraphs: [why], fine: error instanceof Told && error.detail ? error.detail : 'Nothing was kept.', dismissable: true,
+        title: "Couldn't get the depths", paragraphs: [why], dismissable: true,
+        // A link to try in this same browser, and what its result means.
+        body: test ? [
+          el('p', { class: 'card-text' }, el('a', { href: test.url, target: '_blank', rel: 'noopener', id: 'seabed-check', text: test.label })),
+          el('p', { class: 'card-text', text: test.means })
+        ] : null,
+        fine: [error instanceof Told ? error.detail : '', 'Nothing was kept.'].filter(Boolean).join(' '),
         actions: [{ id: 'ok', label: 'OK', primary: true, domId: 'seabed-failed-ok' }]
       });
     }
@@ -305,7 +334,7 @@ async function getWorldwide(area) {
     return;
   }
   await download({
-    url: seabedUrl(area), name: seabedName(area), title: 'Seabed depths', credit: SEABED_CREDIT, who: 'the GMRT depth service', site: 'www.gmrt.org',
+    url: seabedUrl(area), name: seabedName(area), title: 'Seabed depths', credit: SEABED_CREDIT, who: 'the GMRT depth service', check: CHECKS.gmrt,
     asking: 'Asking the depth service… this can take a minute',
     noData: 'The depth service has no data for this area.'
   });
@@ -323,7 +352,7 @@ async function getHighDetail(area, plan) {
     return;
   }
   await download({
-    url: highDetailUrl(plan), name, title: 'High-detail depths', credit: HIGH_DETAIL_CREDIT, who: "IMAS's server", site: 'geoserver.imas.utas.edu.au/geoserver/web',
+    url: highDetailUrl(plan), name, title: 'High-detail depths', credit: HIGH_DETAIL_CREDIT, who: "IMAS's server", check: CHECKS.imas,
     asking: "Asking IMAS's server to cut out this area… up to a minute",
     noData: 'There are no high-detail depths for this area. Try the worldwide depths.'
   });

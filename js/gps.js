@@ -5,6 +5,7 @@
 
 import { Marker } from '../vendor/maplibre-gl.js';
 import { el, toast } from './ui.js';
+import { speedText, speedUnit } from './units.js';
 
 const MS_TO_KNOTS = 1.943844;
 const EMPTY = { type: 'FeatureCollection', features: [] };
@@ -69,7 +70,7 @@ function show(position) {
   const under = Number.isFinite(speed) && speed > 0.5 && Number.isFinite(heading);
   arrow.hidden = !under;
   if (under) arrow.style.transform = `rotate(${heading}deg)`;
-  const knots = Number.isFinite(speed) ? `${(speed * MS_TO_KNOTS).toFixed(1)} kn` : '– kn';
+  const knots = Number.isFinite(speed) ? speedText(speed * MS_TO_KNOTS) : `– ${speedUnit().label}`;
   const course = under ? ` · ${String(Math.round(heading) % 360).padStart(3, '0')}°` : '';
   const hud = document.getElementById('gps-hud');
   hud.textContent = `${knots}${course} · ±${Math.round(accuracy)} m`;

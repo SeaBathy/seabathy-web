@@ -12,6 +12,8 @@ import { add, el, toast, openSheet, refreshSheet, topSheet, backFrom, closeSheet
 import { openAbout, openInstall, canInstall } from './install.js';
 import * as seabed from './seabed.js';
 import * as terrain from './terrain.js';
+import * as places from './places.js';
+import * as units from './units.js';
 
 let map = null;
 
@@ -39,12 +41,29 @@ export function openMenu() {
       row('Maps', `${basemap.basemapById(basemap.state.basemap).label}${basemap.state.satOn ? ' with satellite' : ''}`, openMaps, { id: 'menu-maps' }),
       row('Waypoints', waypoints.list().length ? `${plural(waypoints.list().length, 'waypoint')} saved` : 'Mark spots, back them up as GPX', waypoints.openList, { id: 'menu-waypoints' }),
       row('Save for offline', 'Keep the area on screen for use with no signal', openOffline, { id: 'menu-offline' }),
+      places.menuRow(),
       storageRow(),
+      row('Settings', `Depths in ${units.depthUnit().name.toLowerCase()}, speed in ${units.speedUnit().name.toLowerCase()}`, openSettings, { id: 'menu-settings' }),
       row('About and safety', 'Not for navigation, how to install, updates, credits', openAbout, { id: 'menu-about' }));
   }, { root: true });
 }
 
 /** The menu's Storage row, with the space the app is using filled in once it's known. */
+function openSettings() {
+  openSheet('Settings', (body) => {
+    const choice = (all, current, key) => Object.entries(all).map(([id, unit]) => row(unit.name, null, async () => {
+      await units.set({ [key]: id });
+      refreshSheet();
+    }, { value: current === id ? '✓' : null, id: `unit-${key}-${id}` }));
+    add(body,
+      heading('DEPTHS IN'),
+      choice(units.DEPTHS, units.state.depth, 'depth'),
+      heading('SPEED IN'),
+      choice(units.SPEEDS, units.state.speed, 'speed'),
+      note('Depths are shown this way at the crosshair and in 3D. A chart\'s colour range is always set in metres.'));
+  });
+}
+
 function storageRow() {
   const node = row('Storage', 'What the app keeps on this phone', openStorage, { id: 'menu-storage' });
   files.storage().then((s) => {

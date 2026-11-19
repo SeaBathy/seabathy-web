@@ -5,7 +5,7 @@ import { setting } from './db.js';
 import * as updates from './updates.js';
 import { add, button, card, closeSheet, confirmCard, el, openSheet, refreshSheet, topSheet, heading, note, row, toast, toggle } from './ui.js';
 
-export const VERSION = '0.3.3';
+export const VERSION = '0.3.4';
 /** Raise when the wording changes in a way people should agree to again. */
 const TERMS_VERSION = 1;
 const TERMS_URL = 'https://seabathy.com/terms';
@@ -196,6 +196,8 @@ export function openAbout() {
       note('High-detail depths: Flukes, E. (2026). Multi-resolution bathymetry composite surface for Australian waters (EEZ) [Dataset]. Institute for Marine and Antarctic Studies. https://doi.org/10.25959/Y9VF-V723. Licence: CC BY 4.0. Not to be used for navigation.'),
       note('Worldwide depths: GMRT, the Global Multi-Resolution Topography synthesis (Ryan et al. 2009), CC BY 4.0. Not to be used for navigation.'),
       note('SeaBathy shows both resampled to the screen and coloured, and a bigger area comes as a coarser grid. Their makers do not endorse SeaBathy.'),
+      note('Marine park zones, from each authority\'s own zoning (all CC BY): Australian Marine Parks, DCCEEW; Great Barrier Reef Marine Park Authority; Queensland Government; NSW Department of Primary Industries (Fisheries); SA Department for Environment and Water; WA Department of Primary Industries and Regional Development; and CAPAD 2024, DCCEEW. A guide only: the official zoning map and rules for each park are the law.'),
+      note('Reef and island names: Composite Gazetteer of Australia, Geoscience Australia and the states and territories (CC BY 4.0); Great Barrier Reef Features, Great Barrier Reef Marine Park Authority (CC BY 4.0). Boat ramps: © OpenStreetMap contributors (ODbL).'),
       note('Basemaps: OpenFreeMap © OpenMapTiles, data © OpenStreetMap contributors (ODbL). OpenTopoMap: map data © OpenStreetMap contributors, SRTM; map style © OpenTopoMap (CC-BY-SA). USGS The National Map.'),
       note('Satellite: EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024), CC BY-NC-SA 4.0, for non-commercial use. Daily true colour: NASA Global Imagery Browse Services (GIBS), part of NASA\'s ESDIS.'),
       note('Built with MapLibre GL JS and PMTiles (BSD 3-Clause), three.js, geotiff.js and proj4js (MIT), and Open Sans (SIL Open Font Licence). SeaBathy itself is under the GNU GPL version 3.'),

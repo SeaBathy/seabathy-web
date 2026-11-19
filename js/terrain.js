@@ -12,6 +12,7 @@ import * as waypoints from './waypoints.js';
 import * as gps from './gps.js';
 import * as db from './db.js';
 import * as files from './files.js';
+import { depthUnit, speedUnit } from './units.js';
 import { paletteById, normalised } from './depth.js';
 import { el, toast, progressCard, holdScreenOn, closeSheet } from './ui.js';
 
@@ -247,7 +248,7 @@ function bridge() {
     meta: async () => meta(),
     grid: async () => state.grid.values.buffer,
     drapeTile,
-    units: () => JSON.stringify({ depthPerM: 1, depthLabel: 'm', speedPerKnot: 1, speedLabel: 'kn' }),
+    units: () => JSON.stringify({ depthPerM: depthUnit().perMetre, depthLabel: depthUnit().label, speedPerKnot: speedUnit().perKnot, speedLabel: speedUnit().label }),
     close,
     ready() {},
     log() {},

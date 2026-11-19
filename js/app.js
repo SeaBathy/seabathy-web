@@ -15,6 +15,8 @@ import * as seabed from './seabed.js';
 import * as install from './install.js';
 import * as updates from './updates.js';
 import { isPicking } from './areapicker.js';
+import * as places from './places.js';
+import * as units from './units.js';
 import { $, card, toast, wireSheet, sheetIsOpen } from './ui.js';
 
 const HOLD_MS = 600;
@@ -35,11 +37,7 @@ function formatPosition(lat, lng) {
   return `${part(lat, 'N', 'S', 2)} ${part(lng, 'E', 'W', 3)}`;
 }
 
-function formatDepth(metres) {
-  if (metres > 0) return `${metres.toFixed(metres < 10 ? 1 : 0)} m above the water`;
-  const depth = -metres;
-  return `${depth.toFixed(depth < 100 ? 1 : 0)} m`;
-}
+const formatDepth = (metres) => units.depthText(metres);
 
 /** A finger held still on the chart adds a waypoint there (a right-click does on a computer). */
 function wireHold(map) {
@@ -103,6 +101,7 @@ function wireReadout(map) {
     depthTimer = setTimeout(showDepth, 180);
   });
   map.on('idle', showDepth);
+  units.onChange(showDepth);
   map.on('moveend', () => {
     clearTimeout(cameraTimer);
     cameraTimer = setTimeout(() => {
@@ -138,6 +137,7 @@ async function boot() {
   map.addControl(new ScaleControl({ unit: 'nautical', maxWidth: 110 }), 'bottom-right');
 
   await offline.start();
+  await units.start();
   // The 3D button comes and goes with the depth surveys on screen.
   let view3d = null;
   await charts.start(map, {
@@ -151,13 +151,15 @@ async function boot() {
   gps.begin(map);
   panels.begin(map);
   view3d = await terrain.start(map);
+  await places.start(map, { onChange: () => basemap.refreshCredits() });
   await basemap.start(map, {
     installed: () => {
       charts.addAll();
+      places.install();
       gps.installLayers();
     },
     message: toast,
-    credits: charts.credits
+    credits: () => [...charts.credits(), ...places.credits()]
   });
 
   $('#btn-menu').addEventListener('click', panels.openMenu);
@@ -177,7 +179,7 @@ async function boot() {
   });
 
   // For the tests, and for looking into a problem from the browser's console.
-  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, version: install.VERSION };
+  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, places, units, version: install.VERSION };
   document.body.classList.add('ready');
   sessionStorage.removeItem('startTries');
 

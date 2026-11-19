@@ -238,6 +238,12 @@ function layerAbove(chart) {
 
 function addToMap(chart) {
   removeFromMap(chart);
+  // A hidden chart is taken off the chart altogether and its file is closed, so it holds no
+  // memory. Showing it again opens it afresh.
+  if (chart.visible === false) {
+    if (chart.kind === 'geotiff') survey.close(chart.id);
+    return;
+  }
   map.addSource(sourceId(chart), sourceFor(chart));
   const above = layerAbove(chart);
   for (const layer of layersFor(chart)) map.addLayer(layer, above);

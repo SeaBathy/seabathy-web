@@ -35,6 +35,23 @@ await page.click('#install-skip');
 await page.click('#terms-agree');
 await page.click('#updates-auto');
 // Wide enough that the box drawn below takes in the north of Hook Island.
+// Marine park zones and reef and island names, in the Whitsundays.
+await page.evaluate(() => window.seabathy.map.jumpTo({ center: [148.98, -20.22], zoom: 9.6 }));
+await page.evaluate(async () => {
+  Object.assign(window.seabathy.places.state, { mode: 'all', names: true, ack: true });
+  await window.seabathy.places.install();
+  window.seabathy.basemap.refreshCredits();
+});
+await page.waitForFunction(() => window.seabathy.map.getLayer('sb-over-zones-fill') && window.seabathy.map.queryRenderedFeatures({ layers: ['sb-over-zones-fill'] }).length > 0, null, { timeout: 60000 });
+await settle(4000);
+await idle();
+await shot('places');
+await page.evaluate(async () => {
+  Object.assign(window.seabathy.places.state, { mode: 'off', names: false });
+  await window.seabathy.places.install();
+  window.seabathy.basemap.refreshCredits();
+});
+
 await page.evaluate(() => window.seabathy.map.jumpTo({ center: [148.93, -20.1], zoom: 11.35 }));
 await settle(4000);
 await idle();

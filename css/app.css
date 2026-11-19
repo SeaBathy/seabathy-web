@@ -100,6 +100,10 @@ body.picking #map { cursor: crosshair; }
 /* A message while an area is being drawn goes to the top, clear of the bar. */
 body.picking #toast { bottom: auto; top: calc(var(--top) + 92px); }
 
+.swatches { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 4px; font-size: 13px; color: var(--muted); }
+.swatch { display: inline-flex; align-items: center; gap: 6px; }
+.swatch-dot { width: 12px; height: 12px; border-radius: 3px; }
+
 .licence {
   margin: 0; padding: 4px 2px 24px; white-space: pre-wrap; overflow-wrap: anywhere;
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #d5dbe5;
@@ -247,6 +251,7 @@ body.picking #toast { bottom: auto; top: calc(var(--top) + 92px); }
 .card-title { margin: 4px 0 8px; font-size: 21px; }
 .card-subtitle { margin: 0 0 10px; font-weight: 600; }
 .card-text { margin: 8px 0; font-size: 15px; color: #cbd5e1; }
+.card a { color: var(--accent); font-weight: 600; }
 .card-fine { margin: 12px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .bar { height: 10px; margin: 12px 0 6px; border-radius: 5px; background: #0b1220; border: 1px solid var(--line); overflow: hidden; }

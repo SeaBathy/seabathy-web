@@ -4,8 +4,11 @@
 //
 // Raise VERSION with every change to any file in FILES: that is what makes phones fetch the new copy.
 
-const VERSION = '0.3.3';
+const VERSION = '0.3.4';
 const CACHE = `seabathy-${VERSION}`;
+// Zones, names and ramps: each is kept the first time it is fetched, and stays through app
+// updates. Raise the number when a file in data/ changes.
+const DATA = 'seabathy-data-1';
 const FILES = [
   './',
   'index.html',
@@ -26,11 +29,13 @@ const FILES = [
   'js/offline.js',
   'js/opfs-worker.js',
   'js/panels.js',
+  'js/places.js',
   'js/seabed.js',
   'js/survey.js',
   'js/terrain.js',
   'js/tiles.js',
   'js/ui.js',
+  'js/units.js',
   'js/updates.js',
   'js/waypoints.js',
   '3d/index.html',
@@ -86,7 +91,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     for (const name of await caches.keys()) {
-      if (name.startsWith('seabathy-') && name !== CACHE) await caches.delete(name);
+      if (name.startsWith('seabathy-') && name !== CACHE && name !== DATA) await caches.delete(name);
     }
     await self.clients.claim();
   })());
@@ -103,6 +108,17 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   // Other servers (map tiles, web charts) and part-file requests go straight to the network.
   if (request.method !== 'GET' || url.origin !== self.location.origin || request.headers.has('range')) return;
+  if (url.pathname.includes('/data/')) {
+    event.respondWith((async () => {
+      const kept = await caches.open(DATA);
+      const hit = await kept.match(request);
+      if (hit) return hit;
+      const response = await fetch(request);
+      if (response.ok) await kept.put(request, response.clone());
+      return response;
+    })());
+    return;
+  }
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const hit = await cache.match(request, { ignoreSearch: true });

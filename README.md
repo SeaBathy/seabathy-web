@@ -1,7 +1,7 @@
 # SeaBathy web app
 
 ![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
-![Version 0.3.3](https://img.shields.io/badge/version-0.3.3-informational)
+![Version 0.3.4](https://img.shields.io/badge/version-0.3.4-informational)
 ![Works offline](https://img.shields.io/badge/works-offline-success)
 ![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
 
@@ -29,6 +29,7 @@ and Windows apps do more (tides, sea conditions, routes, tracks, anchor alarm).
 - [Install](#install)
 - [Get depths](#get-depths)
 - [The seabed in 3D](#the-seabed-in-3d)
+- [Marine parks, reef names and boat ramps](#marine-parks-reef-names-and-boat-ramps)
 - [With no signal](#with-no-signal)
 - [What it does](#what-it-does)
 - [What an iPhone web app can't do](#what-an-iphone-web-app-cant-do)
@@ -118,6 +119,25 @@ The viewer is the Android app's own:
 
 Where the area takes in land, 3D opens on the water alone; the Depth tab brings the land back.
 
+## Marine parks, reef names and boat ramps
+
+<img src="screenshots/places.jpg" alt="Marine park zones and reef and island names in the Whitsundays" width="300">
+
+Menu → **Marine parks and places**, for Australian waters. Each is off until you switch it on:
+
+- **Marine park zones:** no-take zones in green, limited fishing in yellow, general use in
+  blue; all zones, or the no-take ones alone. Tap a zone for its park, its official zone name
+  and what fishing it allows. With the GPS on, the app warns when the boat enters a no-take
+  zone.
+- **Reef and island names:** about 9,600 reefs, islands, shoals, banks and rocks, with the
+  numbers of unnamed reefs when you zoom in.
+- **Boat ramps:** about 2,700, from OpenStreetMap.
+
+The zones are a guide only. They come from government data that can lag behind changes: the
+official zoning map and rules for each park are the law. Each file is fetched from the app's
+own address the first time it is switched on (the zones are the biggest, about 1 MB) and then
+kept on the device, so it works with no signal.
+
 ## With no signal
 
 Once you have what you want, the app needs no internet:
@@ -127,6 +147,7 @@ Once you have what you want, the app needs no internet:
 - **The satellite picture** works for the areas you saved with **Save for offline**.
 - **GPS** comes from the phone, not the internet, so the boat shows on the chart and in 3D.
 - **Waypoints** and GPX files are kept on the phone.
+- **Marine park zones, names and ramps** work once each has been switched on with a connection.
 
 Only these need a connection: downloading new depths, the street and topographic basemaps,
 satellite outside the areas you saved, and looking for a newer version of the app. With no
@@ -150,6 +171,12 @@ signal the chart is your depths and saved satellite on a plain background.
   other apps.
 - **GPS:** the boat on the chart and in 3D, with speed, course and accuracy, and a follow mode.
 - **Your own files:** GeoTIFF depth surveys and PMTiles charts.
+- **Marine park zones, reef and island names and boat ramps** round Australia, each with a
+  switch, and a warning on the way into a no-take zone.
+- **Layers you can switch off:** a hidden depth layer is taken off the chart and its file is
+  closed, so it uses no memory until you show it again.
+- **Units:** depths in metres, feet or fathoms, and speed in knots, km/h or mph (Menu →
+  Settings).
 - **Storage:** how much the app is using, and a delete button for every layer and saved area.
 - **Updates** by itself or after a tap, as you choose.
 
@@ -248,6 +275,7 @@ npm test
 engine) set up as an iPhone: first start, offline reload, drawing the download area by finger,
 both depth downloads, the 3D view,
 GeoTIFF surveys, a PMTiles chart, waypoints, GPX, GPS, a web chart, saving an area, a restart,
+hiding a layer, marine park zones with the no-take warning, names and ramps, units,
 deleting a layer, the licence texts, and an update taken both ways (after a tap, and by itself
 at the next start). `ENGINE=chromium npm test` runs the same steps in Chromium. `npm run
 serve` just serves the app at `https://localhost:8443/`. The test files are made by the tests
@@ -274,11 +302,12 @@ pictures in this file. Both need the internet, because they download real depths
 
 | Folder or file | What's in it |
 |---|---|
-| `js/` | The app: `app.js` starts it; `seabed.js` downloads depths for the box drawn with `areapicker.js`; `survey.js`, `charts.js` and `depth.js` read and draw them; `terrain.js` runs the 3D view; `updates.js` keeps the app up to date; `basemap.js`, `waypoints.js`, `gps.js`, `offline.js`, `files.js`, `db.js` are what their names say |
+| `js/` | The app: `app.js` starts it; `seabed.js` downloads depths for the box drawn with `areapicker.js`; `survey.js`, `charts.js` and `depth.js` read and draw them; `terrain.js` runs the 3D view; `places.js` draws the marine park zones, names and ramps; `units.js` holds the units; `updates.js` keeps the app up to date; `basemap.js`, `waypoints.js`, `gps.js`, `offline.js`, `files.js`, `db.js` are what their names say |
 | `3d/` | The 3D viewer: the Android app's (`terrain3d-web`), changed only in where it loads three.js from, how it is handed its grid and map tiles, keeping land hidden after a reload, a map credit that wraps instead of being cut short, and the wording of its own-map form |
 | `vendor/` | MapLibre GL JS, three.js, PMTiles, geotiff.js and proj4js, as released, with their licences. The two three.js add-ons have their import line pointed at the copy beside them |
 | `glyphs/` | Lettering for depth labels, kept with the app so labels work offline |
-| `sw.js` | Keeps the app's own files on the phone for offline use |
+| `data/` | Marine park zones, reef and island names and boat ramps, as the Android app carries them. Fetched only when switched on |
+| `sw.js` | Keeps the app's own files on the phone for offline use, and the `data/` files once fetched |
 | `THIRD-PARTY-NOTICES.txt` | The licence of every library inside the app |
 | `screenshots/` | The pictures in this file |
 | `tests/` | The tests and their small HTTPS server |
@@ -318,6 +347,9 @@ number.
 |---|---|---|
 | High-detail depths | Flukes, E. (2026). Multi-resolution bathymetry composite surface for Australian waters (EEZ) [Dataset]. Institute for Marine and Antarctic Studies. https://doi.org/10.25959/Y9VF-V723 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
 | Worldwide depths | GMRT, the Global Multi-Resolution Topography synthesis: Ryan et al. 2009, doi:10.1029/2008GC002332 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
+| Marine park zones | From each authority's own zoning: Australian Marine Parks, DCCEEW; Great Barrier Reef Marine Park Authority; Queensland Government; NSW Department of Primary Industries (Fisheries); SA Department for Environment and Water; WA Department of Primary Industries and Regional Development; CAPAD 2024, DCCEEW | CC BY. A guide only: the official zoning map and rules for each park are the law |
+| Reef and island names | Composite Gazetteer of Australia, Geoscience Australia and the states and territories; Great Barrier Reef Features, Great Barrier Reef Marine Park Authority | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| Boat ramps | © OpenStreetMap contributors | [ODbL](https://opendatacommons.org/licenses/odbl/) |
 | Dark and street basemaps | OpenFreeMap © OpenMapTiles, © OpenStreetMap contributors | Open data (ODbL). Not saved offline |
 | OpenStreetMap | © OpenStreetMap contributors | ODbL. Shown as you look at it only: its tile servers do not allow saving offline, and the app does not offer it |
 | OpenTopoMap | Map data: © OpenStreetMap contributors, SRTM. Map style: © OpenTopoMap | CC-BY-SA. Asks for no bulk downloads; not saved offline |
