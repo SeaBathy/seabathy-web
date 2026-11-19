@@ -190,6 +190,7 @@ async function loadGrid() {
     $('readout').hidden = true;
     $('profile').hidden = true;
     $('title').textContent = meta.name;
+    showCredit();
     $('grid-info').textContent = (meta.isolated ? `Isolated ${depthText(meta.isolated.shallow)} – ${depthText(meta.isolated.deep)}. ` : '') +
       `${meta.cols}×${meta.rows} cells, ${Math.min(meta.cellX, meta.cellY).toFixed(1)} m each` +
       (meta.partial && !meta.isolated ? ' (area on screen).' : '.') + detailLimitNote(meta);
@@ -418,10 +419,13 @@ function renderMapList() {
   showCredit();
 }
 
-/** The chosen map's credit on screen, as its provider asks (the app names a custom link's server). */
+/**
+ * The credits on screen, as their providers ask: the depths' own, then the chosen map's (the
+ * app names a custom link's server).
+ */
 function showCredit() {
   const d = currentDrape();
-  const text = d ? d.attribution || d.label : '';
+  const text = [model?.credit, d ? d.attribution || d.label : ''].filter(Boolean).join(' • ');
   $('map-credit').textContent = text;
   $('map-credit').hidden = !text;
 }

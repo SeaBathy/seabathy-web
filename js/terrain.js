@@ -198,6 +198,8 @@ function meta() {
   const deep = land && ramp.showOutside ? Math.min(ramp.deepMetres, Math.floor(grid.min)) : ramp.deepMetres;
   return {
     name: chart.name,
+    // Whose depths these are: shown on the 3D view as it is on the chart.
+    credit: chart.attribution || '',
     cols: grid.cols,
     rows: grid.rows,
     cellX: ((grid.bounds[2] - grid.bounds[0]) / grid.cols) * M_PER_DEG_LNG * cosMid(grid.bounds),

@@ -293,7 +293,7 @@ number.
 
 | Map or data | Credit | Terms |
 |---|---|---|
-| High-detail depths | Flukes, E. (2026). Multi-resolution bathymetry composite surface for Australian waters (EEZ). Institute for Marine and Antarctic Studies. doi:10.25959/Y9VF-V723 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
+| High-detail depths | Flukes, E. (2026). Multi-resolution bathymetry composite surface for Australian waters (EEZ) [Dataset]. Institute for Marine and Antarctic Studies. https://doi.org/10.25959/Y9VF-V723 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
 | Worldwide depths | GMRT, the Global Multi-Resolution Topography synthesis: Ryan et al. 2009, doi:10.1029/2008GC002332 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
 | Dark and street basemaps | OpenFreeMap © OpenMapTiles, © OpenStreetMap contributors | Open data (ODbL). Not saved offline |
 | OpenStreetMap | © OpenStreetMap contributors | ODbL. Shown as you look at it only: its tile servers do not allow saving offline, and the app does not offer it |
@@ -301,6 +301,10 @@ number.
 | USGS Imagery | USGS The National Map | US public domain |
 | Sentinel-2 satellite | EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024) | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/): non-commercial use, keep the credit. The one map offered for saving offline, at a gentle pace |
 | Latest true colour | NASA Global Imagery Browse Services (GIBS), part of NASA's ESDIS | NASA data, credit requested |
+
+The depths are shown resampled and coloured by SeaBathy, and a bigger area comes as a coarser
+grid; the data is otherwise as its makers publish it. They do not endorse SeaBathy. Every credit
+shows on the chart and in the 3D view while its map or depth layer is shown.
 
 A map you add by your own link, and any file you load, is used under its owner's terms. Add
 only a map whose terms allow it, and type the credit its owner asks for.

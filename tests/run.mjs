@@ -502,6 +502,8 @@ await step('3D: the seabed opens in 3D; height, a depth band, colours and a wayp
   expect(first.min < -40 && first.max > -30 && first.min >= -65.5 && first.max <= -4.5, `the grid's depths run ${first.min} to ${first.max}`);
   expect(first.tap && first.tap.depth <= first.max && first.tap.depth >= first.min, `a tap in the middle read ${JSON.stringify(first.tap)}`);
   expect(first.palette === 'chart', 'it did not open with the chart\'s own colours');
+  const credit3d = await inside((w, d) => (d.querySelector('#map-credit').hidden ? '' : d.querySelector('#map-credit').textContent));
+  expect(credit3d.includes('GMRT'), `the depths' credit is not on the 3D view: "${credit3d}"`);
   await shot(page, '8-3d');
 
   // Height: 10 times.
