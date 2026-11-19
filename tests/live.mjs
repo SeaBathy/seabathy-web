@@ -5,8 +5,8 @@
 //   ENGINE=chromium node tests/live.mjs      the same in Chromium
 //   node tests/live.mjs https://…            another address
 //
-// It downloads a small piece of real high-detail depths, so it needs the internet and should
-// not be run in a loop.
+// It draws a box and downloads a small piece of real high-detail depths, so it needs the
+// internet and should not be run in a loop.
 
 import { webkit, chromium, devices } from 'playwright';
 import { mkdirSync } from 'node:fs';
@@ -75,6 +75,17 @@ await check('High-detail depths download from IMAS and are kept', async () => {
   await page.click('#menu-seabed');
   const started = Date.now();
   await page.click('#seabed-high');
+  // Nothing is asked for until a box has been drawn and confirmed.
+  await page.waitForSelector('#area-bar');
+  expect(await page.evaluate(() => document.querySelector('#area-go').disabled), 'the picker did not start empty');
+  await page.mouse.move(60, 150);
+  await page.mouse.down();
+  await page.mouse.move(200, 280, { steps: 4 });
+  await page.mouse.move(330, 400, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForFunction(() => !document.querySelector('#area-go').disabled, null, { timeout: 15000 });
+  const told = await page.evaluate(() => `${document.querySelector('#area-size').textContent}: ${document.querySelector('#area-info').textContent}`);
+  await page.click('#area-go');
   await page.waitForFunction(() => window.seabathy.charts.list().length === 1, null, { timeout: 180000 });
   const chart = await page.evaluate(() => {
     const c = window.seabathy.charts.list()[0];
@@ -85,7 +96,7 @@ await check('High-detail depths download from IMAS and are kept', async () => {
   await page.waitForTimeout(3000);
   expect((await page.locator('#credits').innerText()).includes('IMAS'), 'the IMAS credit is not on the chart');
   await page.screenshot({ path: path.join(shots, `${engineName}-chart.png`) });
-  return `${chart.name}: ${chart.cells} cells, ${(chart.size / 1e6).toFixed(1)} MB in ${((Date.now() - started) / 1000).toFixed(1)} s${chart.session ? ' (held in memory: this browser build has no file storage to write to)' : ''}`;
+  return `box ${told} ${chart.name}: ${chart.cells} cells, ${(chart.size / 1e6).toFixed(1)} MB in ${((Date.now() - started) / 1000).toFixed(1)} s${chart.session ? ' (held in memory: this browser build has no file storage to write to)' : ''}`;
 });
 
 await check('The seabed opens in 3D with its credit', async () => {

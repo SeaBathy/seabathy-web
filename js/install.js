@@ -5,7 +5,7 @@ import { setting } from './db.js';
 import * as updates from './updates.js';
 import { add, card, confirmCard, el, openSheet, refreshSheet, heading, note, row, toast, toggle } from './ui.js';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 /** Raise when the wording changes in a way people should agree to again. */
 const TERMS_VERSION = 1;
 const TERMS_URL = 'https://seabathy.com/terms';
@@ -127,8 +127,8 @@ export function openAbout() {
         installPrompt = null;
       }) : null,
       heading('GETTING DEPTHS'),
-      note('Menu, Get seabed depths downloads free depths for the area on screen and keeps them on the phone. They work with no signal, and the 3D button flies you over them.'),
-      note('In Australian waters you can choose High detail: the IMAS composite, 10 m on the shelf, sent by IMAS\'s own server. About 30 km square comes at the full 10 m; a bigger area comes coarser, so zoom in for the spot that matters. Anywhere else, and as the other choice in Australia, the depths are the worldwide GMRT model.'),
+      note('Menu, Get seabed depths: draw a box on the chart over the water you want, and the app downloads free depths for it and keeps them on the phone. They work with no signal, and the 3D button flies you over them.'),
+      note('In Australian waters you can choose High detail: the IMAS composite, 10 m on the shelf, sent by IMAS\'s own server. A box up to about 30 km square comes at the full 10 m; a bigger one comes coarser, so draw a small box for the spot that matters. Anywhere else, and as the other choice in Australia, the depths are the worldwide GMRT model.'),
       note('Your own files load too: GeoTIFF depth surveys (.tif), and PMTiles charts (.pmtiles) with depth shapes, contour lines or chart pictures. Copy them to the Files app, then Charts, Load a file from this phone.'),
       note('An MBTiles file must be converted first, on a computer: pmtiles convert chart.mbtiles chart.pmtiles (the free "pmtiles" tool from Protomaps).'),
       heading('PRIVACY'),

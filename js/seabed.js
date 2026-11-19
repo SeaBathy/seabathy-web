@@ -1,6 +1,6 @@
 // Free seabed depths, fetched by the app itself and kept on the phone, as in the Android and
-// Desktop apps. Two sources, both asked for the area on screen and both answering with a
-// GeoTIFF that then works like any survey, offline and in 3D:
+// Desktop apps. Two sources, both asked for an area the person draws on the chart and both
+// answering with a GeoTIFF that then works like any survey, offline and in 3D:
 //
 // - Worldwide: GMRT (Global Multi-Resolution Topography, CC BY 4.0), which blends ship surveys
 //   with the GEBCO grid. Its server picks the finest detail that fits about 55 MB.
@@ -11,6 +11,7 @@
 
 import * as charts from './charts.js';
 import * as files from './files.js';
+import { pickArea } from './areapicker.js';
 import { card, toast, progressCard, holdScreenOn, closeSheet, loadScript } from './ui.js';
 
 export const SEABED_CREDIT = 'Depths: GMRT, Ryan et al. 2009 (CC BY 4.0)';
@@ -50,8 +51,8 @@ export function useServer(url, which = 'gmrt') {
 }
 
 /**
- * The area to ask for, from what's on screen; east may be past 180 when the date line is on
- * screen. It is never smaller than [minSpan] degrees each way.
+ * The area to ask for, from a box on the chart; east may be past 180 when the date line is
+ * inside it. It is never smaller than [minSpan] degrees each way.
  */
 export function seabedArea(south, west, north, east, centreLat, centreLng, minSpan = MIN_SPAN_DEG) {
   let w = west;
@@ -178,7 +179,7 @@ async function download({ url, name, title, credit, asking, noData }) {
     }
     if (!parts.length || !looksLikeTiff(parts[0])) {
       const said = parts.length ? serverSaid(parts[0]) : '';
-      throw new Error(/too (big|large)|exceed|limit/i.test(said) ? 'That area is more than the depth service will send at once. Zoom in and try again.' : noData);
+      throw new Error(/too (big|large)|exceed|limit/i.test(said) ? 'That area is more than the depth service will send at once. Draw a smaller box and try again.' : noData);
     }
     const file = new File(parts, `${name}.tif`, { type: 'image/tiff' });
     let chart;
@@ -268,37 +269,71 @@ async function getHighDetail(area, plan) {
   });
 }
 
+/** The area a box drawn on the chart asks for; never smaller than [minSpan] degrees each way. */
+const areaOfBox = (box, minSpan) =>
+  seabedArea(box.south, box.west, box.north, box.east, (box.south + box.north) / 2, (box.west + box.east) / 2, minSpan);
+
+/** Worldwide depths: the person draws the area on the chart, then it downloads. */
+async function pickWorldwide(map) {
+  const box = await pickArea(map, {
+    title: 'SEABED DEPTHS', maxKm: MAX_SPAN_KM, maxDegrees: MAX_SPAN_DEG,
+    describe: () => 'From GMRT, 55 MB at most. A smaller box comes sharper.'
+  });
+  if (box) await getWorldwide(areaOfBox(box));
+}
+
+/** High detail: the person draws the area, sees the detail and size it means, then it downloads. */
+async function pickHighDetail(map) {
+  const forward = await toAlbers();
+  const areaOf = (box) => highDetailArea(areaOfBox(box, HIGH_DETAIL_MIN_SPAN_DEG));
+  const box = await pickArea(map, {
+    title: 'HIGH-DETAIL DEPTHS', maxKm: HIGH_DETAIL_SPAN_KM,
+    describe: (drawn) => {
+      const area = areaOf(drawn);
+      if (!inAustralianWaters(area)) return { text: 'High detail covers Australian waters only. Move the box there, or cancel and choose Worldwide.', ok: false };
+      const plan = highDetailPlan(area, forward);
+      return plan.scale < 1
+        ? `About ${detailText(plan.detail)} detail, ${files.formatBytes(plan.bytes)}. A smaller box comes at the full 10 m.`
+        : `The full 10 m detail, about ${files.formatBytes(plan.bytes)}.`;
+    }
+  });
+  if (!box) return;
+  const area = areaOf(box);
+  await getHighDetail(area, highDetailPlan(area, forward));
+}
+
 /**
- * "Get seabed depths": asks which depths (high detail where Australia has it, or worldwide),
- * then downloads the area on screen and adds it as a depth layer.
+ * "Get seabed depths": says what will be downloaded and asks which depths (high detail where
+ * Australia has it, or worldwide). The person then draws the area on the chart. Nothing is
+ * downloaded for what merely happens to be on screen.
  */
 export async function show(map) {
   const c = map.getCenter();
   const b = map.getBounds();
-  const area = seabedArea(b.getSouth(), b.getWest(), b.getNorth(), b.getEast(), c.lat, c.lng);
-  const wide = area.trimmed ? ` The most one download holds is about ${MAX_SPAN_KM} km across, so this is the middle of the screen.` : '';
-  const intro = 'Downloads depths for the area on screen and adds them as a layer that also works in 3D and offline.';
-  const worldwide = 'Worldwide depths come from GMRT, which blends ship surveys with the global GEBCO grid: best where ships have surveyed, much coarser elsewhere. Up to about 55 MB.';
+  // What is on screen only decides whether high detail is offered.
+  const onScreen = seabedArea(b.getSouth(), b.getWest(), b.getNorth(), b.getEast(), c.lat, c.lng);
+  const intro = 'Downloads depths for an area you draw on the chart, and adds them as a layer that also works in 3D and offline.';
+  const worldwide = `Worldwide depths come from GMRT, which blends ship surveys with the global GEBCO grid: best where ships have surveyed, much coarser elsewhere. Up to about ${MAX_SPAN_KM} km across and 55 MB; a smaller area comes sharper.`;
+  const next = 'Next you draw the area on the chart.';
 
-  if (!inAustralianWaters(area)) {
+  if (!inAustralianWaters(onScreen)) {
     const answer = await card({
-      title: 'Get seabed depths?', paragraphs: [intro, `${worldwide}${wide}`], fine: 'Not for navigation.', dismissable: true,
-      actions: [{ id: 'no', label: 'Cancel' }, { id: 'world', label: 'Download', primary: true, domId: 'seabed-go' }]
+      title: 'Get seabed depths?', paragraphs: [intro, worldwide, next], fine: 'Not for navigation.', dismissable: true,
+      actions: [{ id: 'no', label: 'Cancel' }, { id: 'world', label: 'Choose area', primary: true, domId: 'seabed-go' }]
     });
-    if (answer === 'world') await getWorldwide(area);
+    if (answer !== 'world') return;
+    closeSheet();
+    await pickWorldwide(map);
     return;
   }
 
-  const close = highDetailArea(seabedArea(b.getSouth(), b.getWest(), b.getNorth(), b.getEast(), c.lat, c.lng, HIGH_DETAIL_MIN_SPAN_DEG));
-  const plan = highDetailPlan(close, await toAlbers());
-  const sharper = plan.scale < 1 ? ` This much area comes at about ${detailText(plan.detail)}: zoom in for the full 10 m.` : '';
-  const middle = close.trimmed ? ` It covers the middle ${HIGH_DETAIL_SPAN_KM} km of the screen.` : '';
   const answer = await card({
     title: 'Get seabed depths?',
     paragraphs: [
       intro,
-      `High detail: the IMAS composite of Australian waters, 10 m on the shelf, sent by IMAS's own server. About ${detailText(plan.detail)} detail and ${files.formatBytes(plan.bytes)} for this area.${sharper}${middle}`,
-      `${worldwide}${wide}`
+      `High detail: the IMAS composite of Australian waters, 10 m on the shelf, sent by IMAS's own server. Up to about ${HIGH_DETAIL_SPAN_KM} km across; an area up to about 30 km square comes at the full 10 m detail, a bigger one coarser.`,
+      worldwide,
+      next
     ],
     fine: 'Not for navigation.', dismissable: true,
     actions: [
@@ -307,6 +342,8 @@ export async function show(map) {
       { id: 'high', label: 'High detail', primary: true, domId: 'seabed-high' }
     ]
   });
-  if (answer === 'world') await getWorldwide(area);
-  else if (answer === 'high') await getHighDetail(close, plan);
+  if (answer !== 'world' && answer !== 'high') return;
+  closeSheet();
+  if (answer === 'world') await pickWorldwide(map);
+  else await pickHighDetail(map);
 }

@@ -1,7 +1,7 @@
 # SeaBathy web app
 
 ![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
-![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-informational)
+![Version 0.3.1](https://img.shields.io/badge/version-0.3.1-informational)
 ![Works offline](https://img.shields.io/badge/works-offline-success)
 ![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
 
@@ -63,19 +63,24 @@ app**.
 
 ## Get depths
 
-<img src="screenshots/get-depths.jpg" alt="Get seabed depths" width="300">
+<img src="screenshots/get-depths.jpg" alt="Get seabed depths" width="300"> <img src="screenshots/draw-area.jpg" alt="A box drawn on the chart over the water wanted" width="300">
 
-1. Move the chart to the water you want and zoom until it fills the screen.
-2. Menu (☰) → **Get seabed depths**.
-3. The depths arrive as a coloured layer and are kept on the phone. From then on they work
-   with no signal.
+1. Move the chart to the water you want.
+2. Menu (☰) → **Get seabed depths**, and choose which depths.
+3. **Draw a box** over the area: drag a finger across the chart. Drag the box to move it, or a
+   corner to resize it; two fingers still move and zoom the chart. The bar shows the box's size
+   and what the download will be.
+4. Tap **Get depths**. They arrive as a coloured layer and are kept on the phone. From then on
+   they work with no signal.
+
+Nothing is downloaded until you have drawn the box and tapped Get depths.
 
 There are two kinds:
 
 - **High detail, in Australian waters.** The IMAS multi-resolution bathymetry composite, with
-  10 m detail on the continental shelf. The area on screen is cut out and sent by IMAS's own
-  map server. An area up to about 30 km square comes at the full 10 m; a bigger one, up to
-  110 km, comes coarser, so zoom in for the spot that matters.
+  10 m detail on the continental shelf. The box you draw is cut out and sent by IMAS's own
+  map server. A box up to about 30 km square comes at the full 10 m; a bigger one, up to
+  110 km, comes coarser, so draw a small box for the spot that matters.
 - **Worldwide.** GMRT, a free model of the whole ocean built from ship surveys. It is sharpest
   where ships have surveyed and much coarser elsewhere. One download holds up to about 440 km
   across and 55 MB.
@@ -229,7 +234,8 @@ npm test
 ```
 
 `npm test` serves the app over HTTPS on this computer and drives it in WebKit (Safari's
-engine) set up as an iPhone: first start, offline reload, both depth downloads, the 3D view,
+engine) set up as an iPhone: first start, offline reload, drawing the download area by finger,
+both depth downloads, the 3D view,
 GeoTIFF surveys, a PMTiles chart, waypoints, GPX, GPS, a web chart, saving an area, a restart,
 deleting a layer, the licence texts, and an update taken both ways (after a tap, and by itself
 at the next start). `ENGINE=chromium npm test` runs the same steps in Chromium. `npm run
@@ -257,7 +263,7 @@ pictures in this file. Both need the internet, because they download real depths
 
 | Folder or file | What's in it |
 |---|---|
-| `js/` | The app: `app.js` starts it; `seabed.js` downloads depths; `survey.js`, `charts.js` and `depth.js` read and draw them; `terrain.js` runs the 3D view; `updates.js` keeps the app up to date; `basemap.js`, `waypoints.js`, `gps.js`, `offline.js`, `files.js`, `db.js` are what their names say |
+| `js/` | The app: `app.js` starts it; `seabed.js` downloads depths for the box drawn with `areapicker.js`; `survey.js`, `charts.js` and `depth.js` read and draw them; `terrain.js` runs the 3D view; `updates.js` keeps the app up to date; `basemap.js`, `waypoints.js`, `gps.js`, `offline.js`, `files.js`, `db.js` are what their names say |
 | `3d/` | The 3D viewer: the Android app's (`terrain3d-web`), changed only in where it loads three.js from, how it is handed its grid and map tiles, keeping land hidden after a reload, a map credit that wraps instead of being cut short, and the wording of its own-map form |
 | `vendor/` | MapLibre GL JS, three.js, PMTiles, geotiff.js and proj4js, as released, with their licences. The two three.js add-ons have their import line pointed at the copy beside them |
 | `glyphs/` | Lettering for depth labels, kept with the app so labels work offline |

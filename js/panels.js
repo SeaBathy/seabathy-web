@@ -33,7 +33,7 @@ function describe(chart) {
 export function openMenu() {
   openSheet('SeaBathy', (body) => {
     add(body, 
-      row('Get seabed depths', 'Free depths for the area on screen, anywhere in the world. They work offline and in 3D', () => seabed.show(map), { id: 'menu-seabed' }),
+      row('Get seabed depths', 'Draw an area and download free depths for it, anywhere in the world. They work offline and in 3D', () => seabed.show(map), { id: 'menu-seabed' }),
       row('Charts', charts.list().length ? plural(charts.list().length, 'chart') : 'Your depth layers, and files of your own', openCharts, { id: 'menu-charts' }),
       row('Maps', `${basemap.basemapById(basemap.state.basemap).label}${basemap.state.satOn ? ' with satellite' : ''}`, openMaps, { id: 'menu-maps' }),
       row('Waypoints', waypoints.list().length ? `${plural(waypoints.list().length, 'waypoint')} saved` : 'Mark spots, back them up as GPX', waypoints.openList, { id: 'menu-waypoints' }),

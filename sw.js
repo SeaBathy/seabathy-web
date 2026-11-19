@@ -4,7 +4,7 @@
 //
 // Raise VERSION with every change to any file in FILES: that is what makes phones fetch the new copy.
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const CACHE = `seabathy-${VERSION}`;
 const FILES = [
   './',
@@ -14,6 +14,7 @@ const FILES = [
   'THIRD-PARTY-NOTICES.txt',
   'css/app.css',
   'js/app.js',
+  'js/areapicker.js',
   'js/basemap.js',
   'js/charts.js',
   'js/db.js',

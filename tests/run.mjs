@@ -172,6 +172,61 @@ const tileOf = `(lng, lat, z) => {
   return [Math.floor(((lng + 180) / 360) * 2 ** z), Math.floor((0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 2 ** z)];
 }`;
 
+// ---------------------------------------------------------------- drawing an area on the chart
+
+/** The box the tests draw, as fractions of the screen: clear of the buttons and of the bar. */
+const BOX = { from: [0.12, 0.2], to: [0.88, 0.58] };
+
+/** Draws a box on the chart with the mouse, corner to corner, and waits for it to be taken. */
+async function drawBox(page, from = BOX.from, to = BOX.to) {
+  const { width, height } = page.viewportSize();
+  await page.mouse.move(width * from[0], height * from[1]);
+  await page.mouse.down();
+  await page.mouse.move(width * (from[0] + to[0]) / 2, height * (from[1] + to[1]) / 2, { steps: 3 });
+  await page.mouse.move(width * to[0], height * to[1], { steps: 3 });
+  await page.mouse.up();
+}
+
+/** Where [BOX] is on the chart now, in degrees. */
+const boxOnChart = (page) => page.evaluate(({ from, to }) => {
+  const map = window.seabathy.map;
+  const a = map.unproject([innerWidth * from[0], innerHeight * from[1]]);
+  const c = map.unproject([innerWidth * to[0], innerHeight * to[1]]);
+  return { west: Math.min(a.lng, c.lng), east: Math.max(a.lng, c.lng), south: Math.min(a.lat, c.lat), north: Math.max(a.lat, c.lat) };
+}, BOX);
+
+/** One finger on the chart: the kind of touch the app is sent on a phone. */
+const finger = (page, type, x, y) => page.evaluate(([kind, px, py]) => {
+  const target = window.seabathy.map.getCanvasContainer();
+  const touch = { identifier: 1, clientX: px, clientY: py, pageX: px, pageY: py, target };
+  const event = new Event(kind, { bubbles: true, cancelable: true });
+  const down = kind === 'touchend' || kind === 'touchcancel' ? [] : [touch];
+  Object.defineProperty(event, 'touches', { value: down });
+  Object.defineProperty(event, 'targetTouches', { value: down });
+  Object.defineProperty(event, 'changedTouches', { value: [touch] });
+  target.dispatchEvent(event);
+}, [type, x, y]);
+
+/** A finger dragged from one point to another. */
+async function fingerDrag(page, [x0, y0], [x1, y1]) {
+  await finger(page, 'touchstart', x0, y0);
+  for (let i = 1; i <= 4; i++) await finger(page, 'touchmove', x0 + ((x1 - x0) * i) / 4, y0 + ((y1 - y0) * i) / 4);
+  await finger(page, 'touchend', x1, y1);
+}
+
+/** The box as drawn on screen, or null while there is none. */
+const boxOnScreen = (page) => page.evaluate(() => {
+  const edge = document.querySelector('.area-edge');
+  if (!edge || edge.style.display === 'none') return null;
+  const n = (name) => Math.round(Number(edge.getAttribute(name)));
+  return { x: n('x'), y: n('y'), w: n('width'), h: n('height'), tooBig: document.querySelector('.area-pick').classList.contains('too-big') };
+});
+const pickerSays = (page) => page.evaluate(() => ({
+  size: document.querySelector('#area-size')?.textContent || '', info: document.querySelector('#area-info')?.textContent || '',
+  ready: document.querySelector('#area-go') ? !document.querySelector('#area-go').disabled : null
+}));
+const pickerReady = (page) => page.waitForFunction(() => document.querySelector('#area-go') && !document.querySelector('#area-go').disabled, null, { timeout: 15000 });
+
 // ---------------------------------------------------------------- the run
 
 rmSync(profile, { recursive: true, force: true });
@@ -386,7 +441,83 @@ await step('A GeoTIFF in a UTM projection is placed and read correctly, then del
   return `${info.crs}; depth ${info.depth.toFixed(2)} m where ${probe.depth.toFixed(2)} m was written; zooms in to ${info.maxZoom}`;
 });
 
-await step('Get seabed depths: the area on screen is downloaded and kept as a depth layer', async () => {
+await step('Choosing the area: it starts empty, a finger draws the box, moves it and resizes it, and nothing downloads until asked', async () => {
+  await page.evaluate((url) => window.seabathy.seabed.useServer(url), `${DATA}seabed-service`);
+  const requests = () => page.evaluate((prefix) => performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.startsWith(prefix)), `${DATA}seabed-service`);
+  const before = await page.evaluate(() => window.seabathy.charts.list().length);
+  await goTo(page, MID.lng, MID.lat, 10.5);
+  await openMenu(page, 'menu-seabed');
+  const said = await page.locator('.card').innerText();
+  expect(/draw/i.test(said) && said.includes('GMRT'), 'the card does not say the area is drawn on the chart');
+  await page.click('#seabed-go');
+  await page.waitForSelector('#area-bar');
+  // Empty to start with: no box, nothing to confirm, and the menu out of the way.
+  let says = await pickerSays(page);
+  expect(await boxOnScreen(page) === null && says.ready === false && /^Drag/.test(says.size), `it did not start empty: ${JSON.stringify(says)}`);
+  expect(await page.locator('#sheet').isHidden() && await page.locator('#btn-menu').isHidden(), 'the menu is still in the way');
+  await shot(page, '4c-area-empty');
+  // A finger dragged across the chart draws the box.
+  await fingerDrag(page, [80, 150], [300, 380]);
+  await pickerReady(page);
+  let box = await boxOnScreen(page);
+  says = await pickerSays(page);
+  expect(box && Math.abs(box.x - 80) <= 1 && Math.abs(box.y - 150) <= 1 && Math.abs(box.w - 220) <= 2 && Math.abs(box.h - 230) <= 2, `the box drawn is ${JSON.stringify(box)}`);
+  expect(/^\d[\d.]* km × \d[\d.]* km$/.test(says.size) && says.info.includes('GMRT'), `the bar says ${JSON.stringify(says)}`);
+  await shot(page, '4d-area-drawn');
+  // A drag inside the box moves it; a drag from a corner resizes it; a drag outside draws a new one.
+  await fingerDrag(page, [190, 265], [220, 225]);
+  box = await boxOnScreen(page);
+  expect(Math.abs(box.x - 110) <= 2 && Math.abs(box.y - 110) <= 2 && Math.abs(box.w - 220) <= 2 && Math.abs(box.h - 230) <= 2, `after moving it the box is ${JSON.stringify(box)}`);
+  await fingerDrag(page, [330, 340], [350, 400]);
+  box = await boxOnScreen(page);
+  expect(Math.abs(box.x - 110) <= 2 && Math.abs(box.y - 110) <= 2 && Math.abs(box.w - 240) <= 3 && Math.abs(box.h - 290) <= 3, `after resizing it the box is ${JSON.stringify(box)}`);
+  await fingerDrag(page, [30, 160], [100, 250]);
+  box = await boxOnScreen(page);
+  expect(Math.abs(box.x - 30) <= 2 && Math.abs(box.y - 160) <= 2 && Math.abs(box.w - 70) <= 2 && Math.abs(box.h - 90) <= 2, `a new box drawn outside the old one is ${JSON.stringify(box)}`);
+  // A touch that barely moves is not a box.
+  await fingerDrag(page, [200, 300], [206, 304]);
+  expect(JSON.stringify(await boxOnScreen(page)) === JSON.stringify(box), 'a slip of the finger changed the box');
+  // The box belongs to the chart: it moves with it.
+  await page.evaluate(() => window.seabathy.map.panBy([40, 0], { animate: false }));
+  const moved = await boxOnScreen(page);
+  expect(Math.abs(moved.x - (box.x - 40)) <= 2 && Math.abs(moved.w - box.w) <= 2, `after the chart moved 40 px the box is ${JSON.stringify(moved)}`);
+  // Two fingers are for the chart: they zoom it and draw nothing (real touches, which only Chromium can be sent here).
+  let pinch = 'two-finger zoom not tried in this browser';
+  if (engineName === 'chromium') {
+    const zoom = () => page.evaluate(() => window.seabathy.map.getZoom());
+    const zoomBefore = await zoom();
+    const cdp = await context.newCDPSession(page);
+    const points = (gap) => [{ x: 200 - gap, y: 300, id: 1 }, { x: 200 + gap, y: 300, id: 2 }];
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(30) });
+    for (const gap of [45, 60, 80, 100, 120]) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(gap) });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
+    await page.waitForTimeout(700);
+    const zoomAfter = await zoom();
+    const kept = await boxOnScreen(page);
+    expect(zoomAfter > zoomBefore + 0.5, `two fingers did not zoom the chart: ${zoomBefore.toFixed(2)} to ${zoomAfter.toFixed(2)}`);
+    expect(kept && kept.w > moved.w * 1.3, `the box did not grow with the chart: ${JSON.stringify(kept)}`);
+    pinch = `two fingers zoomed the chart from ${zoomBefore.toFixed(1)} to ${zoomAfter.toFixed(1)} and drew nothing`;
+  }
+  // Too big a box is shown as such and can't be confirmed.
+  await page.evaluate(() => window.seabathy.map.jumpTo({ zoom: 4 }));
+  await fingerDrag(page, [40, 150], [350, 400]);
+  await page.waitForFunction(() => /^Too big/.test(document.querySelector('#area-info').textContent), null, { timeout: 5000 });
+  box = await boxOnScreen(page);
+  says = await pickerSays(page);
+  expect(box.tooBig && says.ready === false, `a box hundreds of kilometres across was allowed: ${JSON.stringify(says)}`);
+  await shot(page, '4e-area-too-big');
+  // Cancel: everything as it was, and nothing was ever asked of the depth service.
+  await page.click('#area-cancel');
+  await page.waitForFunction(() => !document.querySelector('#area-bar') && !document.body.classList.contains('picking') && !document.querySelector('.area-pick'));
+  expect(await page.locator('#btn-menu').isVisible(), 'the menu did not come back');
+  expect((await requests()).length === 0, 'the depth service was asked although nothing was confirmed');
+  expect(await page.evaluate(() => window.seabathy.charts.list().length) === before, 'a chart appeared without a download');
+  await goTo(page, MID.lng, MID.lat, 10.5);
+  return `drawn, moved, resized and redrawn by finger; ${pinch}`;
+});
+
+await step('Get seabed depths: the box drawn on the chart is downloaded and kept as a depth layer', async () => {
   // The tests' own server stands in for the depth service, and sends back the test survey.
   await page.evaluate((url) => window.seabathy.seabed.useServer(url), `${DATA}seabed-service`);
   const requests = () => page.evaluate((prefix) => performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.startsWith(prefix)), `${DATA}seabed-service`);
@@ -394,6 +525,12 @@ await step('Get seabed depths: the area on screen is downloaded and kept as a de
   await openMenu(page, 'menu-seabed');
   expect((await page.locator('.card').innerText()).includes('GMRT'), 'the download was not explained first');
   await page.click('#seabed-go');
+  await page.waitForSelector('#area-bar');
+  const drawn = await boxOnChart(page);
+  await drawBox(page);
+  await pickerReady(page);
+  expect((await requests()).length === 0, 'the depths were asked for before the box was confirmed');
+  await page.click('#area-go');
   await page.waitForFunction(() => window.seabathy.charts.list().length === 3, null, { timeout: LOAD });
   const info = await page.evaluate(() => {
     const c = window.seabathy.charts.list().at(-1);
@@ -402,11 +539,14 @@ await step('Get seabed depths: the area on screen is downloaded and kept as a de
   const seabedAsked = await requests();
   expect(seabedAsked.length === 1, `the depth service was asked ${seabedAsked.length} times`);
   const asked = new URL(seabedAsked[0]).searchParams;
-  // What was asked for is the area on screen, round the crosshair.
-  expect(Math.abs((Number(asked.get('north')) + Number(asked.get('south'))) / 2 - MID.lat) < 0.01 && Math.abs((Number(asked.get('east')) + Number(asked.get('west'))) / 2 - MID.lng) < 0.01,
-    `the area asked for was ${seabedAsked[0].split('?')[1]}`);
+  // What was asked for is the box that was drawn (the service's smallest area, round its middle), not the screen.
+  const want = { lat: (drawn.north + drawn.south) / 2, lng: (drawn.east + drawn.west) / 2 };
+  const got = { north: Number(asked.get('north')), south: Number(asked.get('south')), east: Number(asked.get('east')), west: Number(asked.get('west')) };
+  expect(Math.abs((got.north + got.south) / 2 - want.lat) < 0.003 && Math.abs((got.east + got.west) / 2 - want.lng) < 0.003 && Math.abs(want.lat - MID.lat) > 0.01,
+    `the box was round ${want.lat.toFixed(3)}, ${want.lng.toFixed(3)} and the area asked for was ${seabedAsked[0].split('?')[1]}`);
+  expect(got.north - got.south >= drawn.north - drawn.south - 1e-6 && got.north - got.south < 0.3 && got.east - got.west < 0.3, `the area asked for spans ${(got.north - got.south).toFixed(3)}° by ${(got.east - got.west).toFixed(3)}°`);
   expect(asked.get('format') === 'geotiff' && asked.get('layer') === 'topo', 'the request is not for a depth GeoTIFF');
-  expect(/^Seabed 20\.20S 149\.10E/.test(info.name) && info.kind === 'geotiff', `it was saved as "${info.name}"`);
+  expect(/^Seabed 20\.\d\dS 149\.\d\dE/.test(info.name) && info.kind === 'geotiff', `it was saved as "${info.name}"`);
   expect(info.credit.includes('GMRT') && info.credits.includes('GMRT'), 'the depth data is not credited on the chart');
   expect(!info.flipped && info.min < -60 && info.max > -6, `its depths read ${info.min} to ${info.max}`);
   expect(info.session === !stores, 'the depths were not kept as expected');
@@ -415,6 +555,10 @@ await step('Get seabed depths: the area on screen is downloaded and kept as a de
   await goTo(page, MID.lng, MID.lat, 10.5);
   await openMenu(page, 'menu-seabed');
   await page.click('#seabed-go');
+  await page.waitForSelector('#area-bar');
+  await drawBox(page);
+  await pickerReady(page);
+  await page.click('#area-go');
   await page.waitForFunction(() => /already on this phone/.test(document.querySelector('#toast').textContent), null, { timeout: 10000 });
   expect((await requests()).length === 1, 'the same area was downloaded twice');
   return `${info.name}; ${info.min.toFixed(1)} to ${info.max.toFixed(1)} m`;
@@ -441,6 +585,16 @@ await step('High detail: in Australian waters, the 10 m composite is asked for f
   const said = await page.locator('.card').innerText();
   expect(/High detail/.test(said) && /IMAS/.test(said) && /10 m detail/.test(said), 'the high-detail choice is not offered or explained');
   await page.click('#seabed-high');
+  await page.waitForSelector('#area-bar');
+  expect((await page.locator('#area-bar').innerText()).toUpperCase().includes('HIGH-DETAIL DEPTHS'), 'the bar does not say which depths the box is for');
+  const drawn = await boxOnChart(page);
+  await drawBox(page);
+  await pickerReady(page);
+  const told = await pickerSays(page);
+  expect(/full 10 m detail/.test(told.info) && /KB|MB/.test(told.info), `the bar says "${told.info}" about a box a few kilometres across`);
+  await shot(page, '4f-area-high-detail');
+  expect((await requests()).length === 0, 'the depths were asked for before the box was confirmed');
+  await page.click('#area-go');
   await page.waitForFunction(() => window.seabathy.charts.list().length === 4, null, { timeout: LOAD });
   const asked = await requests();
   expect(asked.length === 1, `IMAS's server was asked ${asked.length} times`);
@@ -451,16 +605,23 @@ await step('High detail: in Australian waters, the 10 m composite is asked for f
   const [mx, my] = fixtures.albersMiddle;
   expect(url.searchParams.get('request') === 'GetCoverage' && url.searchParams.get('coverageId').endsWith('Aus_multires_bathymetry_composite_EEZ') && url.searchParams.get('format') === 'image/tiff',
     `the request was ${asked[0].split('?')[1].slice(0, 160)}`);
-  // The box asked for is in the composite's own grid, round the middle of the screen, on whole 10 m cells.
-  expect(Number(e0) < mx && Number(e1) > mx && Number(n0) < my && Number(n1) > my && Number(e0) % 10 === 0 && Number(n1) % 10 === 0, `the box asked for was ${subsets}`);
-  expect(Number(e1) - Number(e0) < 30000 && Number(e1) - Number(e0) > 5000 && !url.searchParams.has('scalefactor'), `a screen at zoom 12 was asked for as ${subsets} ${url.searchParams.get('scalefactor') || ''}`);
+  // What is asked for is the box that was drawn, in the composite's own grid, on whole 10 m cells.
+  const corners = await page.evaluate((b) => {
+    const forward = (p) => window.proj4('EPSG:4326', '+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs').forward(p);
+    const all = [[b.west, b.south], [b.west, b.north], [b.east, b.south], [b.east, b.north]].map(forward);
+    return { e0: Math.min(...all.map((p) => p[0])), e1: Math.max(...all.map((p) => p[0])), n0: Math.min(...all.map((p) => p[1])), n1: Math.max(...all.map((p) => p[1])) };
+  }, drawn);
+  expect(Number(e0) % 10 === 0 && Number(n1) % 10 === 0 && Number(e0) < mx && Number(e1) > mx && Number(n0) < my && Number(n1) > my, `the box asked for was ${subsets}`);
+  expect(Math.abs(Number(e0) - corners.e0) < 40 && Math.abs(Number(e1) - corners.e1) < 40 && Math.abs(Number(n0) - corners.n0) < 40 && Math.abs(Number(n1) - corners.n1) < 40,
+    `the box drawn is E ${Math.round(corners.e0)} to ${Math.round(corners.e1)}, N ${Math.round(corners.n0)} to ${Math.round(corners.n1)}, and what was asked for is ${subsets}`);
+  expect(Number(e1) - Number(e0) < 30000 && Number(e1) - Number(e0) > 3000 && !url.searchParams.has('scalefactor'), `a box drawn at zoom 12 was asked for as ${subsets} ${url.searchParams.get('scalefactor') || ''}`);
   const probe = fixtures.albersProbe;
   const info = await page.evaluate(async ([lng, lat]) => {
     const c = window.seabathy.charts.list().at(-1);
     const survey = await import('./js/survey.js');
     return { name: c.name, credit: c.attribution, crs: c.tiff.crs.label, flipped: c.tiff.flipped, depth: await survey.depthAt(c, lng, lat), session: Boolean(c.session), credits: document.querySelector('#credits').textContent };
   }, [probe.lng, probe.lat]);
-  expect(/^High detail 20\.20S 149\.10E/.test(info.name), `it was saved as "${info.name}"`);
+  expect(/^High detail 20\.\d\dS 149\.\d\dE/.test(info.name), `it was saved as "${info.name}"`);
   expect(/Albers/.test(info.crs) && !info.flipped, `it was read as ${info.crs}`);
   expect(Math.abs(info.depth - probe.depth) < 0.1, `depth ${info.depth} where ${probe.depth} was written`);
   expect(info.credit.includes('IMAS') && info.credits.includes('IMAS'), 'the IMAS composite is not credited on the chart');
@@ -469,6 +630,10 @@ await step('High detail: in Australian waters, the 10 m composite is asked for f
   await goTo(page, MID.lng, MID.lat, 12);
   await openMenu(page, 'menu-seabed');
   await page.click('#seabed-high');
+  await page.waitForSelector('#area-bar');
+  await drawBox(page);
+  await pickerReady(page);
+  await page.click('#area-go');
   await page.waitForFunction(() => /already on this phone/.test(document.querySelector('#toast').textContent), null, { timeout: 10000 });
   expect((await requests()).length === 1, 'the same area was downloaded twice');
   // Tidied away for the checks that follow.

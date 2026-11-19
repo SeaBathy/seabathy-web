@@ -50,6 +50,12 @@ export function toast(text, ms = 3800) {
   toastTimer = setTimeout(() => { node.hidden = true; }, ms);
 }
 
+/** Puts the message away now (something that needs its place has opened). */
+export function hideToast() {
+  clearTimeout(toastTimer);
+  $('#toast').hidden = true;
+}
+
 // ---------------------------------------------------------------- the bottom sheet
 
 const stack = [];

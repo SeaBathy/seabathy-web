@@ -14,6 +14,7 @@ import * as terrain from './terrain.js';
 import * as seabed from './seabed.js';
 import * as install from './install.js';
 import * as updates from './updates.js';
+import { isPicking } from './areapicker.js';
 import { $, card, toast, wireSheet, sheetIsOpen } from './ui.js';
 
 const HOLD_MS = 600;
@@ -114,9 +115,9 @@ function wireReadout(map) {
 
 async function boot() {
   wireSheet();
-  // Nothing in use that loading the page again would lose: no panel or card open, 3D closed,
-  // GPS off, and no chart held only in memory.
-  await updates.start(() => !sheetIsOpen() && !terrain.isOpen() && !gps.isOn() && !document.querySelector('.overlay') && !charts.list().some((c) => c.session));
+  // Nothing in use that loading the page again would lose: no panel or card open, no area being
+  // drawn, 3D closed, GPS off, and no chart held only in memory.
+  await updates.start(() => !sheetIsOpen() && !isPicking() && !terrain.isOpen() && !gps.isOn() && !document.querySelector('.overlay') && !charts.list().some((c) => c.session));
   // The first start shows the whole world; after that, where the chart was left.
   const camera = await db.setting.get('camera', { center: [20, 5], zoom: 1 });
   setWorkerUrl(new URL('../vendor/maplibre-gl-worker.js', import.meta.url).href);

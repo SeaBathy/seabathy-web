@@ -34,7 +34,8 @@ await shot('install');
 await page.click('#install-skip');
 await page.click('#terms-agree');
 await page.click('#updates-auto');
-await page.evaluate(() => window.seabathy.map.jumpTo({ center: [148.93, -20.08], zoom: 12.4 }));
+// Wide enough that the box drawn below takes in the north of Hook Island.
+await page.evaluate(() => window.seabathy.map.jumpTo({ center: [148.93, -20.1], zoom: 11.35 }));
 await settle(4000);
 await idle();
 
@@ -45,6 +46,18 @@ await page.click('#menu-seabed');
 await settle(300);
 await shot('get-depths');
 await page.click('#seabed-high');
+// The area is drawn on the chart: a box over the water wanted.
+await page.waitForSelector('#area-bar');
+const { width, height } = page.viewportSize();
+await page.mouse.move(width * 0.25, height * 0.14);
+await page.mouse.down();
+await page.mouse.move(width * 0.5, height * 0.4, { steps: 4 });
+await page.mouse.move(width * 0.75, height * 0.62, { steps: 4 });
+await page.mouse.up();
+await page.waitForFunction(() => !document.querySelector('#area-go').disabled);
+await settle(300);
+await shot('draw-area');
+await page.click('#area-go');
 await page.waitForFunction(() => window.seabathy.charts.list().length === 1, null, { timeout: 180000 });
 // The "saved" message has gone and the chart has settled, with the crosshair over deep water.
 await settle(8000);
