@@ -251,8 +251,9 @@ Every push to GitHub also runs the tests in WebKit on a Mac (`.github/workflows/
 WebKit on a computer is still not an iPhone. The file picker, the Home Screen install, storage
 limits and real GPS can only be checked on a phone.
 
-`node tests/screenshots.mjs` retakes the pictures in this file. It needs the internet, because
-it downloads real depths and the satellite picture.
+`node tests/live.mjs` checks the published app at its real address: the certificate, offline
+use, a real high-detail download and the 3D view. `node tests/screenshots.mjs` retakes the
+pictures in this file. Both need the internet, because they download real depths.
 
 | Folder or file | What's in it |
 |---|---|
