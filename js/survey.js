@@ -249,7 +249,9 @@ export async function importTiff(file, id, progress) {
       gridFile: `${id}.grid`,
       bounds,
       maxZoom: Math.max(6, Math.min(20, Math.ceil(Math.log2(metresPerPixel(midLat, 0) / Math.max(0.05, cell))))),
-      ramp: autoFitRamp(fitted[0], fitted[1]),
+      // The range is fitted to the bulk of the survey, so one deep hole doesn't stretch it;
+      // the few depths beyond it take the end colours instead of being left out.
+      ramp: { ...autoFitRamp(fitted[0], fitted[1]), showOutside: true },
       tiff: {
         width: saved.width, height: saved.height, bbox: saved.bbox, crs: saved.crs, noData: saved.noData,
         levels: saved.levels, cols: grid.cols, rows: grid.rows, min: grid.min, max: grid.max, flipped: grid.flipped,

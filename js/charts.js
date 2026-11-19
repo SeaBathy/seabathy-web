@@ -423,7 +423,8 @@ function settle(chart) {
   const signed = chart.positiveDown ? Array.from(sorted, (v) => -v).sort((a, b) => a - b) : sorted;
   const deep = Math.floor(signed[Math.floor(signed.length * 0.02)]);
   const shallow = Math.min(0, Math.ceil(signed[Math.floor(signed.length * 0.98)]));
-  if (shallow - deep >= 1) chart.ramp = { ...chart.ramp, shallowMetres: shallow, deepMetres: deep };
+  // Fitted to the bulk of the chart; the few depths beyond it take the end colours.
+  if (shallow - deep >= 1) chart.ramp = { ...chart.ramp, shallowMetres: shallow, deepMetres: deep, showOutside: true };
   restyle(chart);
 }
 
