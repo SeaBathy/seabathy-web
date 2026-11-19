@@ -179,6 +179,7 @@ async function boot() {
   // For the tests, and for looking into a problem from the browser's console.
   window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, version: install.VERSION };
   document.body.classList.add('ready');
+  sessionStorage.removeItem('startTries');
 
   await install.showInstallIfNeeded();
   await install.showTermsIfNeeded();

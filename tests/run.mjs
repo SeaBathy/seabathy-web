@@ -1038,7 +1038,12 @@ await step('Licences: SeaBathy\'s own, the libraries\' and the font\'s all read 
 await step('Updates: "ask first" waits for a tap, "automatic" switches at the next start, and the charts stay', async () => {
   const sw = readFileSync(path.join(appRoot, 'sw.js'), 'utf8');
   const current = /const VERSION = '([^']+)'/.exec(sw)[1];
-  const newer = (version) => swap.set('/sw.js', sw.replace(`const VERSION = '${current}'`, `const VERSION = '${version}'`));
+  const stampFile = readFileSync(path.join(appRoot, 'js/install.js'), 'utf8');
+  /** Publishes a release: every file of a release carries its version, the app's own version line among them. */
+  const newer = (version) => {
+    swap.set('/sw.js', sw.replace(`const VERSION = '${current}'`, `const VERSION = '${version}'`));
+    swap.set('/js/install.js', stampFile.replace(`export const VERSION = '${current}'`, `export const VERSION = '${version}'`));
+  };
   /** The version of the copy of the app now in charge of the page. */
   const inCharge = () => page.evaluate(() => new Promise((resolve) => {
     const channel = new MessageChannel();
@@ -1068,6 +1073,12 @@ await step('Updates: "ask first" waits for a tap, "automatic" switches at the ne
   const kept = () => page.evaluate(() => ({ charts: window.seabathy.charts.list().length, waypoints: window.seabathy.waypoints.list().length }));
   const before = await kept();
   expect(await inCharge() === current, `the copy in charge is not version ${current}`);
+
+  // A release caught half-published (its service worker new, another file still the old one) is not taken.
+  swap.set('/sw.js', sw.replace(`const VERSION = '${current}'`, "const VERSION = '9.9.0'"));
+  expect(await page.evaluate(() => window.seabathy.updates.check()) === 'latest', 'a half-published release was taken');
+  expect(await page.locator('#update').isHidden() && await inCharge() === current, 'a half-published release is offered or in charge');
+  expect((await page.evaluate(() => caches.keys())).filter((n) => n.startsWith('seabathy-')).join() === `seabathy-${current}`, 'a half-published release left files behind');
 
   // Ask first: found from About, and nothing changes on "Cancel".
   newer('9.9.1');
@@ -1103,6 +1114,28 @@ await step('Updates: "ask first" waits for a tap, "automatic" switches at the ne
   expect(after.charts === before.charts && after.waypoints === before.waypoints, `after the updates: ${JSON.stringify(after)}, before: ${JSON.stringify(before)}`);
   return `${current} to 9.9.1 after a tap, then to 9.9.2 by itself at the next start; ${after.charts} charts and ${after.waypoints} waypoint still there`;
 }, worker);
+
+await step('A start that meets files from two releases says so and tries again by itself', async () => {
+  // A fresh browser with nothing kept, as for someone opening the address while it is being published.
+  const other = await engine.launch(launchOptions);
+  try {
+    const fresh = await (await other.newContext(options)).newPage();
+    // One file from "another release": it lacks what the others expect of it.
+    swap.set('/js/gpx.js', 'export const somethingElse = 1;\n');
+    await fresh.goto(APP, { waitUntil: 'load', timeout: LOAD });
+    await fresh.waitForFunction(() => !document.querySelector('#fatal').hidden, null, { timeout: 30000 });
+    const said = await fresh.locator('#fatal-text').innerText();
+    expect(/being updated/.test(said) && /Trying again/.test(said), `the start screen said "${said}"`);
+    expect(await fresh.evaluate(() => typeof window.seabathy) === 'undefined', 'the app started with a file that does not fit');
+    // The site is whole again: the app comes up at its next try, with nobody touching it.
+    swap.delete('/js/gpx.js');
+    await fresh.waitForFunction(() => window.seabathy && document.body.classList.contains('ready') && document.querySelector('#fatal').hidden, null, { timeout: 60000 });
+    return `"${said}", then it started by itself`;
+  } finally {
+    swap.delete('/js/gpx.js');
+    await other.close();
+  }
+});
 
 await step('The app\'s own files: all listed for offline use, and one version number throughout', async () => {
   const sw = readFileSync(path.join(appRoot, 'sw.js'), 'utf8');

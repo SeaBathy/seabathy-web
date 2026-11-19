@@ -4,7 +4,7 @@
 //
 // Raise VERSION with every change to any file in FILES: that is what makes phones fetch the new copy.
 
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 const CACHE = `seabathy-${VERSION}`;
 const FILES = [
   './',
@@ -63,8 +63,20 @@ const FILES = [
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    // Straight from the server, not from the browser's own cache: a fresh copy of every file.
-    await cache.addAll(FILES.map((file) => new Request(file, { cache: 'reload' })));
+    // A fresh copy of every file, and all from this release. While a new version is being
+    // published the web host can for a moment hand out the older copy of a file under its
+    // plain address. Asking with the version in the address gets round any such copy, and the
+    // check below refuses a mix: a failed install is simply tried again later.
+    await Promise.all(FILES.map(async (file) => {
+      const response = await fetch(`${file}?v=${VERSION}`, { cache: 'reload' });
+      if (!response.ok) throw new Error(`${file} answered ${response.status}`);
+      await cache.put(new Request(file), response);
+    }));
+    const stamp = await (await cache.match('js/install.js')).text();
+    if (!stamp.includes(`VERSION = '${VERSION}'`)) {
+      await caches.delete(CACHE);
+      throw new Error('The files on the server are from another release');
+    }
     // The very first install takes over at once; an update waits until the app says to switch
     // (at its next start with automatic updates, or after a tap).
     if (!self.registration.active) await self.skipWaiting();

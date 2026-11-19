@@ -1,7 +1,7 @@
 # SeaBathy web app
 
 ![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
-![Version 0.3.2](https://img.shields.io/badge/version-0.3.2-informational)
+![Version 0.3.3](https://img.shields.io/badge/version-0.3.3-informational)
 ![Works offline](https://img.shields.io/badge/works-offline-success)
 ![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
 
@@ -232,7 +232,9 @@ everyone starts again with an empty app.
 
 **When you change any file,** raise `VERSION` in `sw.js`, `js/install.js` and `package.json`.
 That is what makes phones fetch the new copy. Publishing the changed files is the whole
-release: each phone finds the new version by itself the next time it is online.
+release: each phone finds the new version by itself the next time it is online. A phone only
+takes a new version whose files all carry that version, so one that looks while the site is
+half-published keeps the old version and tries again later.
 
 ## Development and tests
 
