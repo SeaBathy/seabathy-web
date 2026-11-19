@@ -193,7 +193,7 @@ export async function askIfNeeded() {
       'Automatic: the new version is used the next time you open the app. Ask me first: a bar at the top says it is ready, and nothing changes until you tap it.',
       'Your depths, charts and waypoints stay on the phone through every update.'
     ],
-    fine: 'You can change this at any time in Menu, About.',
+    fine: 'You can change this at any time in Settings, About.',
     actions: [{ id: 'ask', label: 'Ask me first', domId: 'updates-ask' }, { id: 'auto', label: 'Automatic', primary: true, domId: 'updates-auto' }]
   });
   await setMode(answer);

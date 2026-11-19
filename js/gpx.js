@@ -14,8 +14,8 @@ export function decimal(value) {
   return text === '-0' ? '0' : text;
 }
 
-/** A GPX document of [waypoints] ({name, lat, lng, desc, icon, color}). */
-export function buildGpx(waypoints) {
+/** A GPX document of [waypoints] ({name, lat, lng, desc, icon, color}) and [routes] ({name, points}). */
+export function buildGpx(waypoints, routes = []) {
   const out = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<gpx version="1.1" creator="SeaBathy" xmlns="http://www.topografix.com/GPX/1/1" ' +
@@ -29,6 +29,13 @@ export function buildGpx(waypoints) {
     if (w.color) line += `<extensions><sb:color>${escapeXml(w.color)}</sb:color></extensions>`;
     out.push(`${line}</wpt>`);
   }
+  for (const route of routes) {
+    out.push(`  <rte><name>${escapeXml(route.name || '')}</name>`);
+    for (const p of route.points) {
+      out.push(`    <rtept lat="${decimal(p.lat)}" lon="${decimal(p.lng)}">${p.name ? `<name>${escapeXml(p.name)}</name>` : ''}</rtept>`);
+    }
+    out.push('  </rte>');
+  }
   out.push('</gpx>', '');
   return out.join('\n');
 }
@@ -41,7 +48,7 @@ function childText(node, name) {
 }
 
 /**
- * The waypoints in a GPX 1.0 or 1.1 file, and how many routes and tracks it also holds (those
+ * The waypoints and routes in a GPX 1.0 or 1.1 file, and how many tracks it also holds (those
  * aren't brought in). Throws with a plain message when the file isn't GPX.
  */
 export function parseGpx(text) {
@@ -66,5 +73,17 @@ export function parseGpx(text) {
       color: colour && /^#[0-9a-f]{6}$/i.test(colour) ? colour.toUpperCase() : null
     });
   }
-  return { waypoints, routes: childrenNamed(root, 'rte').length, tracks: childrenNamed(root, 'trk').length };
+  const routes = [];
+  for (const rte of childrenNamed(root, 'rte')) {
+    const points = [];
+    for (const pt of childrenNamed(rte, 'rtept')) {
+      const lat = Number(pt.getAttribute('lat'));
+      const lng = Number(pt.getAttribute('lon'));
+      if (!pt.hasAttribute('lat') || !pt.hasAttribute('lon') || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+      const name = childText(pt, 'name');
+      points.push(name ? { lat, lng, name } : { lat, lng });
+    }
+    if (points.length > 1) routes.push({ name: childText(rte, 'name') || '', points });
+  }
+  return { waypoints, routes, tracks: childrenNamed(root, 'trk').length };
 }

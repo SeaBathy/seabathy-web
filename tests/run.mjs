@@ -154,12 +154,54 @@ const goTo = (page, lng, lat, zoom) => page.evaluate(([x, y, z]) => new Promise(
   map.jumpTo({ center: [x, y], zoom: z });
 }), [lng, lat, zoom]);
 
-const openMenu = async (page, item) => {
-  await page.evaluate(() => document.querySelector('#sheet-close').click());
-  await page.click('#btn-menu');
-  await page.click(`#${item}`);
+/** Back to the chart: every panel closed, one Close at a time, then the Layers panel. */
+const closeSheet = (page) => page.evaluate(() => {
+  for (let i = 0; i < 12 && !document.querySelector('#sheet-layer').hidden; i++) document.querySelector('#sheet-close').click();
+  if (!document.querySelector('#drawer').hidden) document.querySelector('#drawer-close').click();
+});
+/** Where each panel is: the taps that lead to it from the Layers panel. */
+const PATHS = {
+  'menu-seabed': ['#menu-seabed'],
+  'menu-settings': ['#menu-settings'],
+  'menu-install': ['#menu-settings', '#menu-install'],
+  'menu-display': ['#menu-settings', '#settings-display'],
+  'menu-charts': ['#menu-settings', '#menu-charts'],
+  'menu-maps': ['#menu-settings', '#settings-maps', '#menu-maps'],
+  'menu-offline': ['#menu-settings', '#settings-maps', '#menu-offline'],
+  'menu-storage': ['#menu-settings', '#settings-maps', '#menu-storage'],
+  'menu-boat': ['#menu-settings', '#settings-boat'],
+  'menu-routes': ['#menu-settings', '#settings-boat', '#menu-routes'],
+  'menu-places': ['#menu-settings', '#menu-places'],
+  'menu-backup': ['#menu-settings', '#settings-backup'],
+  'menu-about': ['#menu-settings', '#menu-about']
 };
-const closeSheet = (page) => page.evaluate(() => document.querySelector('#sheet-close').click());
+const openMenu = async (page, item) => {
+  await closeSheet(page);
+  await page.click('#btn-menu');
+  for (const tap of PATHS[item]) await page.click(tap);
+};
+/** The Layers panel, opened from the chart. */
+const openLayers = async (page) => {
+  await closeSheet(page);
+  await page.click('#btn-menu');
+};
+/** A layer's own panel (its depth colours and options): the newest layer's, or the one named. */
+const openLayer = async (page, name = null) => {
+  await openLayers(page);
+  await (name ? page.locator('.layer', { hasText: name }) : page.locator('.layer:not(#layer-sat)')).first().locator('.layer-more').click();
+};
+/** Removes the newest layer with its Remove button in the Layers panel. */
+const removeLayer = async (page) => {
+  await openLayers(page);
+  await page.locator('.layer:not(#layer-sat) .layer-remove').first().click();
+  await page.click('#confirm-yes');
+};
+/** Picks a unit: Settings, Boat and navigation, the unit's row, then the choice. */
+const setUnit = async (page, key, id) => {
+  await openMenu(page, 'menu-boat');
+  await page.click(`#boat-${key}`);
+  await page.click(`#unit-${key}-${id}`);
+};
 const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.png`) }).catch(() => {});
 const only = (page, where) => page.evaluate((keep) => {
   for (const c of window.seabathy.charts.list()) {
@@ -226,6 +268,28 @@ const pickerSays = (page) => page.evaluate(() => ({
   ready: document.querySelector('#area-go') ? !document.querySelector('#area-go').disabled : null
 }));
 const pickerReady = (page) => page.waitForFunction(() => document.querySelector('#area-go') && !document.querySelector('#area-go').disabled, null, { timeout: 15000 });
+
+/**
+ * Clicks something that hands the person a file, and answers the file's text. Where the browser
+ * has a share sheet for the file (a Mac, as on an iPhone) the app hands it there: a test can't
+ * tap a share sheet, so it stands in for it. Elsewhere the file comes as a download.
+ */
+async function fileFrom(page, selector) {
+  await page.evaluate(() => {
+    window.sharedFile = null;
+    Object.defineProperty(navigator, 'share', { configurable: true, value: async (data) => { window.sharedFile = await data.files[0].text(); } });
+  });
+  const download = page.waitForEvent('download', { timeout: 30000 }).then(async (d) => {
+    const target = path.join(workDir, 'data', `handed-${Date.now()}`);
+    await d.saveAs(target);
+    return readFileSync(target, 'utf8');
+  });
+  const shared = page.waitForFunction(() => window.sharedFile, null, { timeout: 30000 }).then((h) => h.jsonValue());
+  download.catch(() => {});
+  shared.catch(() => {});
+  await page.click(selector);
+  return Promise.any([download, shared]);
+}
 
 // ---------------------------------------------------------------- the run
 
@@ -337,8 +401,7 @@ await step('Depth bands are coloured by a paint expression, and the depth shows 
 });
 
 await step('The depth colour range and palette can be changed', async () => {
-  await openMenu(page, 'menu-charts');
-  await page.locator('#sheet-body .row').first().click();
+  await openLayer(page);
   await page.selectOption('#ramp-palette', 'ocean');
   await page.fill('#ramp-from', '2');
   await page.fill('#ramp-to', '40');
@@ -423,10 +486,7 @@ await step('A GeoTIFF in a UTM projection is placed and read correctly, then del
   expect(info.bounds[0] > AREA.west && info.bounds[2] < AREA.east + 0.1 && info.bounds[1] > AREA.south - 0.1 && info.bounds[3] < AREA.north, `bounds ${info.bounds}`);
   await page.waitForTimeout(600);
   await shot(page, '4b-utm-survey');
-  await openMenu(page, 'menu-charts');
-  await page.locator('#sheet-body .row').first().click();
-  await page.click('#chart-delete');
-  await page.click('#confirm-yes');
+  await removeLayer(page);
   await page.waitForFunction(() => window.seabathy.charts.list().length === 2, null, { timeout: 10000 });
   if (stores) {
     // The files go a moment after the chart leaves the list.
@@ -639,10 +699,7 @@ await step('High detail: in Australian waters, the 10 m composite is asked for f
   await page.waitForFunction(() => /already on this phone/.test(document.querySelector('#toast').textContent), null, { timeout: 10000 });
   expect((await requests()).length === 1, 'the same area was downloaded twice');
   // Tidied away for the checks that follow.
-  await openMenu(page, 'menu-charts');
-  await page.locator('#sheet-body .row').first().click();
-  await page.click('#chart-delete');
-  await page.click('#confirm-yes');
+  await removeLayer(page);
   await page.waitForFunction(() => window.seabathy.charts.list().length === 3, null, { timeout: 10000 });
   await closeSheet(page);
   return `${info.name}; ${info.crs}; ${info.depth.toFixed(2)} m where ${probe.depth.toFixed(2)} m was written; box ${Math.round((Number(e1) - Number(e0)) / 1000)} × ${Math.round((Number(n1) - Number(n0)) / 1000)} km at full detail`;
@@ -746,15 +803,12 @@ await step('3D: the seabed opens in 3D; height, a depth band, colours and a wayp
   await frame.locator('#btn-close').click();
   await page.waitForFunction(() => !document.querySelector('#view3d') && !window.SeaBathy3D, null, { timeout: 10000 });
   // Tidied away for the checks that follow: the waypoint, then the depths.
-  await openMenu(page, 'menu-waypoints');
-  await page.locator('#wpt-list .row').first().click();
+  await openLayers(page);
+  await page.locator('#wpt-list .wrow-edit').first().click();
   await page.click('#wpt-delete');
   await page.click('#confirm-yes');
   await page.waitForFunction(() => window.seabathy.waypoints.list().length === 0);
-  await openMenu(page, 'menu-charts');
-  await page.locator('#sheet-body .row').first().click();
-  await page.click('#chart-delete');
-  await page.click('#confirm-yes');
+  await removeLayer(page);
   await page.waitForFunction(() => window.seabathy.charts.list().length === 2, null, { timeout: 10000 });
   await closeSheet(page);
   return `${first.cols}×${first.rows} cells, ${first.info.trim()}; a tap read ${first.tap.depth.toFixed(1)} m; band ${band.min.toFixed(1)} to ${band.max.toFixed(1)} m; ${frames} frames drawn`;
@@ -763,14 +817,23 @@ await step('3D: the seabed opens in 3D; height, a depth band, colours and a wayp
 await step('A waypoint is added at the crosshair, named and saved', async () => {
   await page.evaluate(() => window.seabathy.terrain.close());
   await closeSheet(page);
+  // The waypoint tool, as in the Android app: on, then a tap on the chart drops a mark at the crosshair.
+  const marksBefore = await page.evaluate(() => window.seabathy.waypoints.list().length);
   await page.click('#btn-add');
+  expect(/crosshair/.test(await page.locator('#hint').innerText()) && await page.evaluate(() => window.seabathy.tools.mode() === 'waypoint'), 'the waypoint tool did not switch on and say what a tap does');
+  await page.mouse.click(200, 420);
   await page.waitForSelector('#wpt-name');
+  expect(await page.evaluate(() => window.seabathy.waypoints.list().length) === marksBefore, 'a waypoint was saved before Save waypoint was tapped');
+  await shot(page, '4e-new-waypoint');
   const name = 'Reef edge & "bommie" <1>';
   await page.fill('#wpt-name', name);
   await page.fill('#wpt-desc', 'Good on the run-out tide');
-  await page.locator('.swatch').nth(3).click();
+  await page.locator('.colour-choice').nth(3).click();
   await page.locator('.icon-choice').nth(4).click();
   await page.click('#wpt-save');
+  // The tool stays on for the next mark until its button is tapped again.
+  await page.click('#btn-add');
+  expect(await page.locator('#hint').isHidden() && await page.evaluate(() => window.seabathy.tools.mode() === 'none'), 'the waypoint tool did not switch off');
   // Saved, and drawn on the chart under its new name.
   await page.waitForFunction((wanted) => document.querySelector('.wpt .wpt-name')?.textContent === wanted, name, { timeout: 10000 });
   const w = await page.evaluate(() => window.seabathy.waypoints.list()[0]);
@@ -800,7 +863,7 @@ await step('GPS: the boat shows, with speed and accuracy, and the chart follows 
 
 await step('GPX: export, delete the waypoint, import the file, and it comes back the same', async () => {
   const before = await page.evaluate(() => window.seabathy.waypoints.list()[0]);
-  await openMenu(page, 'menu-waypoints');
+  await openMenu(page, 'menu-backup');
   const gpxFile = path.join(workDir, 'data', `exported-${engineName}-${pass}.gpx`);
   // Where the browser has a share sheet for files (a Mac, as on an iPhone), the app hands the
   // file to it. A test can't tap a share sheet, so it stands in for it and takes the file.
@@ -819,10 +882,12 @@ await step('GPX: export, delete the waypoint, import the file, and it comes back
   }
   const text = readFileSync(gpxFile, 'utf8');
   expect(text.includes('<gpx version="1.1" creator="SeaBathy"') && text.includes('&amp;') && text.includes('&lt;1&gt;'), 'the GPX file is not as expected');
-  await page.locator('#wpt-list .row').first().click();
+  await openLayers(page);
+  await page.locator('#wpt-list .wrow-edit').first().click();
   await page.click('#wpt-delete');
   await page.click('#confirm-yes');
   await page.waitForFunction(() => window.seabathy.waypoints.list().length === 0);
+  await openMenu(page, 'menu-backup');
   await page.setInputFiles('#gpx-file', gpxFile);
   await page.waitForFunction(() => window.seabathy.waypoints.list().length === 1, null, { timeout: 10000 });
   const after = await page.evaluate(() => window.seabathy.waypoints.list()[0]);
@@ -837,6 +902,7 @@ await step('GPX: export, delete the waypoint, import the file, and it comes back
 
 await step('A web chart is read with part-file requests from another site', async () => {
   await openMenu(page, 'menu-charts');
+  await page.click('#chart-web');
   await page.fill('#chart-url', `${DATA}test-chart.pmtiles`);
   await page.click('#chart-add-url');
   await page.waitForFunction(() => window.seabathy.charts.list().some((c) => c.where === 'remote'), null, { timeout: 90000 });
@@ -1004,18 +1070,16 @@ await step('A hidden layer comes off the chart and frees its memory, and draws a
     await page.waitForFunction(async (id) => (await import('./js/survey.js')).held().includes(id), chart.id, { timeout: 30000 });
   }
   expect(await onMap(), 'the layer is not on the chart to begin with');
-  // Switched off in its own panel.
-  await openMenu(page, 'menu-charts');
-  await page.locator('#sheet-body .row', { hasText: chart.name }).first().click();
-  await page.click('#chart-visible');
+  // Switched off with its switch in the Layers panel.
+  const tick = `#layer-${chart.id} input[type="checkbox"]`;
+  await openLayers(page);
+  await page.click(tick);
   await page.waitForFunction((id) => !window.seabathy.map.getSource(`chart-${id}`), chart.id, { timeout: 10000 });
   expect(!(await held()), 'the hidden survey is still held open in memory');
   expect(await page.evaluate((id) => window.seabathy.map.getStyle().layers.every((l) => l.source !== `chart-${id}`), chart.id), 'layers of the hidden chart are still on the map');
-  await page.evaluate(() => document.querySelector('#sheet-back').click());
-  expect((await page.locator('#sheet-body .row', { hasText: chart.name }).first().innerText()).includes('Hidden'), 'the list does not show it as hidden');
+  expect(await page.locator(tick).isChecked() === false, 'the Layers panel does not show it as hidden');
   // And on again: it is opened afresh and drawn.
-  await page.locator('#sheet-body .row', { hasText: chart.name }).first().click();
-  await page.click('#chart-visible');
+  await page.click(tick);
   await closeSheet(page);
   await page.waitForFunction((id) => window.seabathy.map.getSource(`chart-${id}`) && window.seabathy.map.isSourceLoaded(`chart-${id}`), chart.id, { timeout: 30000 });
   if (chart.kind === 'geotiff') await page.waitForFunction(async (id) => (await import('./js/survey.js')).held().includes(id), chart.id, { timeout: 30000 });
@@ -1173,9 +1237,8 @@ await step('Settings: depths in feet or fathoms and speed in other units, at the
   };
   const metres = await depthShown();
   expect(/ m\b/.test(metres), `the crosshair depth reads "${metres}"`);
-  await openMenu(page, 'menu-settings');
-  await page.click('#unit-depth-ft');
-  await page.click('#unit-speed-kmh');
+  await setUnit(page, 'depth', 'ft');
+  await setUnit(page, 'speed', 'kmh');
   await closeSheet(page);
   await page.waitForFunction(() => / ft\b/.test(document.querySelector('#readout-depth').textContent), null, { timeout: 10000 });
   const feet = await depthShown();
@@ -1183,18 +1246,336 @@ await step('Settings: depths in feet or fathoms and speed in other units, at the
   const told = await page.evaluate(() => ({ speed: window.seabathy.units.speedText(10), depth: window.seabathy.units.depthText(-18.288), land: window.seabathy.units.depthText(3) }));
   expect(told.speed === '18.5 km/h' && told.depth === '60.0 ft' && told.land === '9.8 ft above the water', `units gave ${JSON.stringify(told)}`);
   // The choice is kept, and metres and knots come back.
-  expect(JSON.stringify(await page.evaluate(() => window.seabathy.db.setting.get('units'))) === JSON.stringify({ depth: 'ft', speed: 'kmh' }), 'the units were not kept');
-  await openMenu(page, 'menu-settings');
-  await page.click('#unit-depth-fm');
+  const keptUnits = await page.evaluate(() => window.seabathy.db.setting.get('units'));
+  expect(keptUnits.depth === 'ft' && keptUnits.speed === 'kmh', `the units were kept as ${JSON.stringify(keptUnits)}`);
+  await setUnit(page, 'depth', 'fm');
   await closeSheet(page);
   await page.waitForFunction(() => / fm\b/.test(document.querySelector('#readout-depth').textContent), null, { timeout: 10000 });
   const fathoms = await depthShown();
-  await openMenu(page, 'menu-settings');
-  await page.click('#unit-depth-m');
-  await page.click('#unit-speed-kn');
+  await setUnit(page, 'depth', 'm');
+  await setUnit(page, 'speed', 'kn');
   await closeSheet(page);
   await page.waitForFunction(() => / m\b/.test(document.querySelector('#readout-depth').textContent), null, { timeout: 10000 });
   return `${metres} = ${feet} = ${fathoms}`;
+});
+
+await step('The Layers panel: Settings, every layer with its switch, slider and buttons, the waypoints and the basemap; a layer can be renamed', async () => {
+  await openLayers(page);
+  await page.waitForSelector('#drawer:not([hidden])');
+  const all = await charts(page);
+  const said = await page.locator('#drawer').innerText();
+  expect(/Layers/.test(said) && /Settings/.test(said) && /Map layers/.test(said) && /Satellite picture/.test(said) && /Waypoints/.test(said) && /Basemap/.test(said), `the Layers panel is missing a part: ${said.replace(/\s+/g, ' ').slice(0, 200)}`);
+  for (const c of all) expect(said.includes(c.name), `the Layers panel does not list ${c.name}`);
+  expect(await page.locator('#sheet').isHidden(), 'a panel is open over the Layers panel');
+  await shot(page, '7e-drawer');
+  // A layer's switch works there and then, with the panel still open.
+  const chart = all[all.length - 1];
+  const tick = `#layer-${chart.id} input[type="checkbox"]`;
+  await page.click(tick);
+  await page.waitForFunction((id) => !window.seabathy.map.getSource(`chart-${id}`), chart.id, { timeout: 10000 });
+  expect(await page.locator('#drawer').isVisible(), 'switching a layer closed the Layers panel');
+  await page.click(tick);
+  await page.waitForFunction((id) => Boolean(window.seabathy.map.getSource(`chart-${id}`)), chart.id, { timeout: 10000 });
+  // How see-through it is, on its own slider; the line under its name says so.
+  const fade = `#layer-${chart.id} input[type="range"]`;
+  await page.locator(fade).fill('0.5');
+  await page.waitForFunction((id) => window.seabathy.charts.list().find((c) => c.id === id).opacity === 0.5 && /50%/.test(document.querySelector(`#layer-${id} .layer-sub`).textContent), chart.id, { timeout: 10000 });
+  await page.waitForTimeout(400);
+  await page.locator(fade).fill('1');
+  await page.waitForFunction((id) => window.seabathy.charts.list().find((c) => c.id === id).opacity === 1, chart.id, { timeout: 10000 });
+  await page.waitForTimeout(400);
+  // Rename: a card with the name in it.
+  await page.click(`#layer-${chart.id} .layer-rename`);
+  await page.fill('#chart-name', 'My best reef');
+  await page.click('#chart-name-save');
+  await page.waitForFunction((id) => document.querySelector(`#layer-${id} .layer-title`)?.textContent === 'My best reef', chart.id, { timeout: 10000 });
+  const stored = await page.evaluate(async (id) => ({ now: window.seabathy.charts.list().find((c) => c.id === id).name, kept: ((await window.seabathy.db.all('charts')).find((c) => c.id === id) || {}).name }), chart.id);
+  expect(stored.now === 'My best reef' && (chart.session || stored.kept === 'My best reef'), `after renaming: ${JSON.stringify(stored)}`);
+  // Its own panel opens over the Layers panel, and Close goes back to it.
+  await page.click(`#layer-${chart.id} .layer-more`);
+  await page.waitForFunction(() => !document.querySelector('#sheet-layer').hidden && document.querySelector('#sheet-title').textContent === 'My best reef', null, { timeout: 10000 });
+  await page.click('#sheet-back');
+  expect(await page.locator('#sheet').isHidden() && await page.locator('#drawer').isVisible(), 'Close did not go back to the Layers panel');
+  await page.click(`#layer-${chart.id} .layer-rename`);
+  await page.fill('#chart-name', chart.name);
+  await page.click('#chart-name-save');
+  await page.waitForFunction(([id, name]) => document.querySelector(`#layer-${id} .layer-title`)?.textContent === name, [chart.id, chart.name], { timeout: 10000 });
+  // The satellite picture is a layer here too, and the basemap is picked at the foot.
+  await page.click('#layer-sat input[type="checkbox"]');
+  await page.waitForFunction(() => window.seabathy.basemap.state.satOn && Boolean(window.seabathy.map.getLayer('sb-sat')), null, { timeout: 10000 });
+  await page.click('#layer-sat input[type="checkbox"]');
+  await page.waitForFunction(() => !window.seabathy.basemap.state.satOn, null, { timeout: 10000 });
+  const base = await page.evaluate(() => window.seabathy.basemap.state.basemap);
+  expect(await page.locator('#drawer-basemap').inputValue() === base, 'the basemap shown is not the one in use');
+  await page.selectOption('#drawer-basemap', 'dark');
+  await page.waitForFunction(() => window.seabathy.basemap.state.basemap === 'dark', null, { timeout: 30000 });
+  await page.selectOption('#drawer-basemap', base);
+  await page.waitForFunction((id) => window.seabathy.basemap.state.basemap === id, base, { timeout: 30000 });
+  await closeSheet(page);
+  expect(await page.locator('#drawer').isHidden(), 'the Layers panel did not close');
+  return `${all.length} layers listed; "${chart.name}" renamed and named back`;
+});
+
+await step('Tools: measuring a distance and bearing, positions in three forms, going to a position, the night filter', async () => {
+  await goTo(page, MID.lng, MID.lat, 10);
+  await page.click('#btn-measure');
+  expect(await page.locator('#hint').isVisible() && await page.evaluate(() => document.querySelector('#btn-measure').classList.contains('active')), 'the measure tool did not switch on');
+  const marksBefore = await page.evaluate(() => window.seabathy.waypoints.list().length);
+  await page.mouse.click(110, 320);
+  await page.waitForFunction(() => /Tap another point/.test(document.querySelector('#toolcard').textContent));
+  await page.mouse.click(290, 320);
+  await page.waitForFunction(() => /°T/.test(document.querySelector('#toolcard').textContent));
+  const measured = await page.locator('#toolcard').innerText();
+  const want = await page.evaluate(() => {
+    const map = window.seabathy.map;
+    const a = map.unproject([110, 320]);
+    const b = map.unproject([290, 320]);
+    return window.seabathy.tools.distanceM({ lat: a.lat, lng: a.lng }, { lat: b.lat, lng: b.lng });
+  });
+  const shown = parseFloat(/([\d.]+) nm/.exec(measured)?.[1] || 'NaN') * 1852;
+  expect(Math.abs(shown - want) < want * 0.02 && /090°T/.test(measured), `180 px east measured as "${measured.replace(/\s+/g, ' ')}" where ${(want / 1852).toFixed(2)} nm was expected`);
+  await shot(page, '7f-measure');
+  await page.click('#measure-clear');
+  expect(await page.locator('#toolcard').isHidden() && await page.locator('#hint').isHidden(), 'Clear did not end the measuring');
+  expect(await page.evaluate(() => window.seabathy.waypoints.list().length) === marksBefore, 'measuring added a waypoint');
+
+  // The position at the top, in each form.
+  const position = () => page.locator('#readout-pos').innerText();
+  const forms = { dms: '[0-9]″[NS]', dd: '^[0-9.]+°[NS]', ddm: '^[0-9]+°[0-9.]+′[NS]' };
+  const setForm = async (id) => {
+    await openMenu(page, 'menu-display');
+    await page.click('#display-position');
+    await page.click(`#unit-position-${id}`);
+    await closeSheet(page);
+    // The bar is written again a moment after the choice is kept.
+    await page.waitForFunction((pattern) => new RegExp(pattern).test(document.querySelector('#readout-pos').textContent), forms[id], { timeout: 10000 });
+  };
+  await setForm('dms');
+  const dms = await position();
+  await setForm('dd');
+  const dd = await position();
+  await setForm('ddm');
+  const ddm = await position();
+  expect(/^\d+°\d\d′[\d.]+″[NS]\s+\d+°\d\d′[\d.]+″[EW]$/.test(dms) && /^[\d.]+°[NS]\s+[\d.]+°[EW]$/.test(dd) && /^\d+°[\d.]+′[NS]\s+\d+°[\d.]+′[EW]$/.test(ddm), `positions read "${dms}", "${dd}", "${ddm}"`);
+  // A tap on it: go to a position typed in.
+  const typed = await page.evaluate(() => [window.seabathy.tools.parseAngle('20 15.3 S', 90), window.seabathy.tools.parseAngle('-20.255', 90), window.seabathy.tools.parseAngle("149°06'00\"E", 180), window.seabathy.tools.parseAngle('91', 90), window.seabathy.tools.parseAngle('reef', 90)]);
+  expect(Math.abs(typed[0] + 20.255) < 1e-9 && typed[1] === -20.255 && typed[2] === 149.1 && typed[3] === null && typed[4] === null, `typed positions were read as ${JSON.stringify(typed)}`);
+  const read = await page.evaluate(() => ['20°15.300′S 149°06.000′E', 'S 20 15.3 E 149 6', '-20.255, 149.1', '20 15 18 S 149 6 0 E', '20.255 S', 'reef'].map((text) => window.seabathy.units.parsePosition(text)));
+  expect(read.slice(0, 4).every((p) => p && Math.abs(p.lat + 20.255) < 1e-9 && Math.abs(p.lng - 149.1) < 1e-9) && read[4] === null && read[5] === null, `whole positions were read as ${JSON.stringify(read)}`);
+  await page.click('#readout-pos');
+  expect(await page.locator('#goto-format').inputValue() === 'ddm' && /′[NS]/.test(await page.locator('#goto-preview').innerText()), 'the card did not open on the position under the crosshair');
+  await page.fill('#goto-coords', 'reef');
+  expect(/Not a position/.test(await page.locator('#goto-preview').innerText()), 'a word was read as a position');
+  await page.fill('#goto-coords', '20 15.3 S 149 6.0 E');
+  expect(/20°15\.300′S\s+149°06\.000′E/.test(await page.locator('#goto-preview').innerText()), `the preview reads "${await page.locator('#goto-preview').innerText()}"`);
+  await shot(page, '7f-goto');
+  await page.click('#goto-go');
+  await page.waitForFunction(() => Math.abs(window.seabathy.map.getCenter().lat + 20.255) < 1e-6 && Math.abs(window.seabathy.map.getCenter().lng - 149.1) < 1e-6, null, { timeout: 10000 });
+
+  // The night filter: on, kept, and off again.
+  await openMenu(page, 'menu-display');
+  await page.click('#setting-night');
+  expect(await page.evaluate(async () => document.body.classList.contains('night') && await window.seabathy.db.setting.get('night')) === true, 'the night filter did not come on');
+  await shot(page, '7g-night');
+  await page.click('#setting-night');
+  expect(await page.evaluate(() => document.body.classList.contains('night')) === false, 'the night filter did not go off');
+  await closeSheet(page);
+  return `${measured.replace(/\s+/g, ' ').replace('MEASURE ', '')}; ${ddm} = ${dms} = ${dd}`;
+});
+
+await step('Man overboard: the spot is marked at the boat, the way back is shown, and End leaves the mark', async () => {
+  await context.setGeolocation(FIX);
+  const before = await page.evaluate(() => window.seabathy.waypoints.list().length);
+  // The GPS on and settled at the boat first: a browser can hand over an older position at its first report.
+  if (!(await page.evaluate(() => window.seabathy.gps.isOn()))) await page.click('#btn-gps');
+  await page.waitForFunction(([lat, lng]) => {
+    const fix = window.seabathy.gps.lastFix();
+    return fix && Math.abs(fix.coords.latitude - lat) < 1e-6 && Math.abs(fix.coords.longitude - lng) < 1e-6;
+  }, [FIX.latitude, FIX.longitude], { timeout: 30000 });
+  await page.click('#btn-mob');
+  await page.waitForFunction(() => window.seabathy.waypoints.list().some((w) => /^MOB /.test(w.name)), null, { timeout: 30000 });
+  const mark = await page.evaluate(() => window.seabathy.waypoints.list().find((w) => /^MOB /.test(w.name)));
+  expect(mark.icon === 'mob' && Math.abs(mark.lat - (-20.21)) < 1e-6 && Math.abs(mark.lng - 149.08) < 1e-6, `the mark is ${JSON.stringify(mark)}`);
+  await page.waitForFunction(() => /MAN OVERBOARD/.test(document.querySelector('#toolcard').textContent) && /back, steer/.test(document.querySelector('#toolcard').textContent), null, { timeout: 15000 });
+  expect(await page.evaluate(() => document.querySelector('#toolcard').classList.contains('alert') && window.seabathy.gps.isOn()), 'the alert is not up, or the GPS is off');
+  let back = await page.locator('#toolcard').innerText();
+  expect(/VHF channel 16/.test(back), 'the card does not say to call for help');
+  // The boat a little over half a mile north of the mark: the way back is south.
+  if (!windowsWebkit) {
+    await context.setGeolocation({ latitude: FIX.latitude + 0.01, longitude: FIX.longitude, accuracy: 6 });
+    await page.waitForFunction(() => /steer 180°T/.test(document.querySelector('#toolcard').textContent), null, { timeout: 20000 });
+    back = await page.locator('#toolcard').innerText();
+    expect(/0\.6\d nm back/.test(back), `from 0.01° north the card said: ${back.replace(/\s+/g, ' ')}`);
+  }
+  await shot(page, '7h-mob');
+  await page.click('#mob-end');
+  expect(await page.locator('#toolcard').isHidden(), 'End left the alert up');
+  expect(await page.evaluate(() => window.seabathy.waypoints.list().length) === before + 1, 'the mark did not stay as a waypoint');
+  // Tidied away for the checks that follow.
+  await page.evaluate(() => { for (let i = 0; i < 3 && window.seabathy.gps.isOn(); i++) window.seabathy.gps.tap(); });
+  await context.setGeolocation(FIX);
+  await page.locator(`.wpt[data-id="${mark.id}"]`).evaluate((node) => node.click());
+  await page.click('#wpt-delete');
+  await page.click('#confirm-yes');
+  await page.waitForFunction((n) => window.seabathy.waypoints.list().length === n, before, { timeout: 10000 });
+  await closeSheet(page);
+  return back.replace(/\s+/g, ' ').slice(0, 90);
+});
+
+await step('Routes: points at the crosshair, each leg with its bearing, distance, time and least depth; saved, and in and out as GPX', async () => {
+  await only(page, 'all');
+  await goTo(page, MID.lng, MID.lat, 10);
+  await page.click('#btn-route');
+  expect(await page.evaluate(() => document.querySelector('#btn-route').classList.contains('active')) && /Tap the map to add a point/.test(await page.locator('#toolcard').innerText()), 'the route tool did not open empty');
+  // A tap anywhere on the chart puts the point at the crosshair; this spot is clear of the waypoint's own marker.
+  const tapChart = () => page.mouse.click(300, 190);
+  // A waypoint tapped while planning becomes a point of the route, with its name.
+  await page.locator('.wpt').first().evaluate((node) => node.click());
+  await page.waitForFunction(() => window.seabathy.routes.current().length === 1);
+  expect(await page.evaluate(() => window.seabathy.routes.current()[0].name === window.seabathy.waypoints.list()[0].name) && await page.locator('#sheet').isHidden(), 'the waypoint tapped did not become the first point');
+  // A tap without moving the chart off that spot adds nothing.
+  await tapChart();
+  await page.waitForFunction(() => /Move the chart/.test(document.querySelector('#toast').textContent) && !document.querySelector('#toast').hidden);
+  expect(await page.evaluate(() => window.seabathy.routes.current().length) === 1, 'a tap on the same spot added a point');
+  await goTo(page, MID.lng + 0.03, MID.lat, 10);
+  await tapChart();
+  await goTo(page, MID.lng + 0.03, MID.lat + 0.03, 10);
+  await tapChart();
+  await goTo(page, MID.lng + 0.06, MID.lat + 0.03, 10);
+  await tapChart();
+  await page.waitForFunction(() => window.seabathy.routes.current().length === 4);
+  await page.click('#route-undo');
+  const points = await page.evaluate(() => window.seabathy.routes.current());
+  expect(points.length === 3 && Math.abs(points[0].lat - (-20.2)) < 1e-6 && Math.abs(points[1].lng - 149.13) < 1e-6 && Math.abs(points[2].lat - (-20.17)) < 1e-6, `the route is ${JSON.stringify(points)}`);
+  const card = await page.locator('#toolcard').innerText();
+  expect(/Unsaved route — 2 legs, [\d.]+ nm\s+\d+m at 20\.0 kn \(cruise\) · ETA \d\d:\d\d\s+1st leg 090°T/.test(card), `the route card says "${card.replace(/\s+/g, ' ')}"`);
+  expect(await page.evaluate(() => window.seabathy.map.getLayer('sb-route-line') && window.seabathy.map.getSource('sb-route')._data !== undefined), 'the route is not drawn');
+  // The legs: east, then north; with the least depth where a survey covers them.
+  await page.click('#route-legs');
+  await page.waitForFunction(() => document.querySelectorAll('#sheet-body [id^="leg-"]').length === 2 && [...document.querySelectorAll('#sheet-body [id^="leg-"] .row-detail')].every((d) => !/Reading/.test(d.textContent)), null, { timeout: 60000 });
+  const legs = await page.locator('#sheet-body [id^="leg-"]').allInnerTexts();
+  expect(/Leg 1 → Point 2\s+090°T\s+[\d.]+ nm\s+\d+m\s+arrive \d\d:\d\d\s+Total/.test(legs[0]) && /Leg 2 → Point 3\s+000°T\s+[\d.]+ nm\s+\d+m\s+arrive/.test(legs[1]), `the legs read ${JSON.stringify(legs)}`);
+  expect(/2 legs, [\d.]+ nm, \d+m\s+Arrive \d\d:\d\d/.test(await page.locator('#legs-total').innerText()), 'the legs have no total');
+  expect(legs.every((l) => /Least depth [\d.]+ m|No depths on the device|Crosses land/.test(l)), `the depths along the legs read ${JSON.stringify(legs)}`);
+  if ((await charts(page)).some((c) => c.kind === 'geotiff')) expect(/Least depth [\d.]+ m/.test(legs[0]), `with a survey under it, the first leg reads "${legs[0]}"`);
+  await shot(page, '7i-route-legs');
+  await closeSheet(page);
+  // The cruise speed is set on the card, and the times follow it.
+  await page.fill('#route-speed', '10');
+  await page.locator('#route-speed').dispatchEvent('change');
+  await page.waitForFunction(() => /at 10\.0 kn/.test(document.querySelector('#toolcard').textContent), null, { timeout: 10000 });
+  // Reversed, and back again.
+  await page.click('#route-reverse');
+  expect(await page.evaluate(() => Math.abs(window.seabathy.routes.current()[0].lat - (-20.17)) < 1e-6), 'Reverse did not turn the route round');
+  await page.click('#route-reverse');
+  await shot(page, '7j-route');
+  // Saved by name, listed, and out as GPX.
+  await page.click('#route-save');
+  await page.fill('#route-name', 'To the shoal & back <1>');
+  await page.click('#route-save-yes');
+  await page.waitForFunction(() => window.seabathy.routes.list().length === 1);
+  await page.click('#route-library');
+  await page.locator('#sheet-body .row', { hasText: 'To the shoal' }).click();
+  const gpx = await fileFrom(page, '#route-gpx');
+  expect(gpx.includes('<rte><name>To the shoal &amp; back &lt;1&gt;</name>') && (gpx.match(/<rtept /g) || []).length === 3, 'the GPX file does not hold the route');
+  // Deleted, then read back in from that file; a second read adds nothing.
+  await page.click('#route-delete');
+  await page.click('#confirm-yes');
+  await page.waitForFunction(() => window.seabathy.routes.list().length === 0);
+  const read = await page.evaluate(async (text) => [await window.seabathy.waypoints.importGpxText(text), await window.seabathy.waypoints.importGpxText(text)], gpx);
+  expect(read[0].routes === 1 && read[1].routes === 0, `reading the GPX file twice gave ${JSON.stringify(read)}`);
+  const back = await page.evaluate(() => window.seabathy.routes.list()[0]);
+  expect(back.name === 'To the shoal & back <1>' && back.points.length === 3 && Math.abs(back.points[1].lng - 149.13) < 1e-6, `the route came back as ${JSON.stringify(back)}`);
+  expect((await page.evaluate(() => window.seabathy.db.setting.get('routes'))).length === 1, 'the route was not kept');
+  await closeSheet(page);
+  await page.click('#route-clear');
+  await page.click('#btn-route');
+  expect(await page.locator('#toolcard').isHidden() && await page.evaluate(() => window.seabathy.routes.current().length) === 0, 'the route tool did not clear and close');
+  await goTo(page, MID.lng, MID.lat, 10);
+  return `${card.replace(/\s+/g, ' ').replace(/^ROUTE\s+UNDO\s+CLEAR\s+/i, '').split(/\s+SAVE\b/i)[0]}; ${legs[0].replace(/\s+/g, ' ')}`;
+});
+
+await step('Backup: waypoints, routes and settings go into one file, and come back from it', async () => {
+  await openMenu(page, 'menu-backup');
+  const text = await fileFrom(page, '#backup-save');
+  const backup = JSON.parse(text);
+  expect(backup.app === 'SeaBathy web app' && backup.format === 1 && backup.waypoints.length === 1 && backup.routes.length === 1 && backup.settings.units && backup.settings.places, `the backup holds ${text.slice(0, 200)}`);
+  expect(!text.includes('termsAccepted') && !text.includes('camera'), 'the backup carries this device\'s own state');
+  // The same file read back adds nothing; one with another mark and route in it adds just those.
+  const more = JSON.parse(text);
+  more.waypoints.push({ ...more.waypoints[0], id: 'another', name: 'From the backup', lat: more.waypoints[0].lat + 0.01 });
+  more.routes.push({ id: 'r2', name: 'Second route', points: [{ lat: -20.3, lng: 149.0 }, { lat: -20.31, lng: 149.02 }], created: 1 });
+  const file = path.join(workDir, 'data', `backup-${engineName}-${pass}.json`);
+  writeFileSync(file, JSON.stringify(more));
+  await page.setInputFiles('#backup-file', file);
+  await page.waitForSelector('#restore-marks');
+  expect(/2 waypoints and 2 routes/.test(await page.locator('.card').innerText()), 'the card does not say what the backup holds');
+  await page.click('#restore-marks');
+  await page.waitForFunction(() => /Added 1 waypoint and 1 route; 1 already here/.test(document.querySelector('#toast').textContent), null, { timeout: 10000 });
+  const now = await page.evaluate(() => ({ waypoints: window.seabathy.waypoints.list().map((w) => w.name), routes: window.seabathy.routes.list().map((r) => r.name) }));
+  expect(now.waypoints.includes('From the backup') && now.routes.includes('Second route') && now.waypoints.length === 2 && now.routes.length === 2, `after the restore: ${JSON.stringify(now)}`);
+  // A file that isn't a backup is refused with a plain word.
+  const wrong = path.join(workDir, 'data', 'not-a-backup.json');
+  writeFileSync(wrong, '{"hello": 1}');
+  await page.setInputFiles('#backup-file', wrong);
+  await page.waitForFunction(() => /isn't a SeaBathy/.test(document.querySelector('#toast').textContent), null, { timeout: 10000 });
+  await closeSheet(page);
+  // Tidied away: the extra mark and both routes.
+  const extra = await page.evaluate(() => window.seabathy.waypoints.list().find((w) => w.name === 'From the backup').id);
+  await page.locator(`.wpt[data-id="${extra}"]`).evaluate((node) => node.click());
+  await page.click('#wpt-delete');
+  await page.click('#confirm-yes');
+  await page.waitForFunction(() => window.seabathy.waypoints.list().length === 1, null, { timeout: 10000 });
+  await closeSheet(page);
+  for (let i = 0; i < 2; i++) {
+    await openMenu(page, 'menu-routes');
+    await page.locator('#sheet-body .row').first().click();
+    await page.click('#route-delete');
+    await page.click('#confirm-yes');
+    await page.waitForFunction((n) => window.seabathy.routes.list().length === n, 1 - i, { timeout: 10000 });
+    await closeSheet(page);
+  }
+  return `${backup.waypoints.length} waypoint, ${backup.routes.length} route and ${Object.keys(backup.settings).length} settings saved; restoring added only what was new`;
+});
+
+await step('Buoys and beacons (beta): the warning each time, the marks drawn and described, credited, and off again', async () => {
+  const count = () => page.evaluate(() => (window.seabathy.map.getLayer('sb-over-marks') ? window.seabathy.map.queryRenderedFeatures({ layers: ['sb-over-marks'] }).length : -1));
+  await openMenu(page, 'menu-places');
+  await page.click('#places-marks');
+  await page.waitForSelector('#marks-ack');
+  expect(/not for navigation/i.test(await page.locator('.card').innerText()), 'the warning does not say not for navigation');
+  await page.click('#marks-ack');
+  await closeSheet(page);
+  // Sydney Harbour: channel marks, cardinals and moorings.
+  await goTo(page, 151.255, -33.845, 13);
+  await page.waitForFunction(() => window.seabathy.map.getLayer('sb-over-marks') && window.seabathy.map.queryRenderedFeatures({ layers: ['sb-over-marks'] }).length > 3, null, { timeout: 90000 });
+  expect((await page.locator('#credits').innerText()).includes('Nav marks:'), 'the marks are not credited on the chart');
+  const mark = await page.evaluate(() => {
+    const map = window.seabathy.map;
+    for (const f of map.queryRenderedFeatures({ layers: ['sb-over-marks'] })) {
+      const p = map.project(f.geometry.coordinates);
+      if (p.x > 70 && p.x < 320 && p.y > 150 && p.y < 520) return { x: p.x, y: p.y - 6, label: f.properties.label, icon: f.properties.icon };
+    }
+    return null;
+  });
+  expect(mark, 'no mark is drawn where it can be tapped');
+  expect(await page.evaluate((icon) => window.seabathy.map.hasImage(`sb-mark-${icon}`), mark.icon), `there is no picture for ${mark.icon}`);
+  await page.mouse.click(mark.x, mark.y);
+  await page.waitForSelector('#place-close', { timeout: 10000 });
+  const said = await page.locator('.card').innerText();
+  expect(/Positions may be old or wrong/.test(said) && /Not for navigation/.test(said), `a tap on a mark said: ${said.replace(/\s+/g, ' ')}`);
+  await shot(page, '7k-buoys');
+  await page.click('#place-close');
+  const shownCount = await count();
+  await openMenu(page, 'menu-places');
+  await page.click('#places-marks');
+  await closeSheet(page);
+  await page.waitForFunction(() => !window.seabathy.map.getLayer('sb-over-marks'), null, { timeout: 10000 });
+  expect(!(await page.locator('#credits').innerText()).includes('Nav marks:'), 'the credit stayed after the marks went');
+  // Off again at every start: the choice is not kept.
+  expect(await page.evaluate(async () => JSON.stringify(await window.seabathy.db.setting.get('places')).includes('marks')) === false, 'the buoys layer was kept as on');
+  await goTo(page, MID.lng, MID.lat, 10);
+  return `${shownCount} marks in Sydney Harbour; a tap said "${said.split('\n').filter(Boolean).slice(1, 2).join('')}"`;
 });
 
 await step('Install: the menu offers it, with one tap where the browser makes an offer and the steps for every other browser', async () => {

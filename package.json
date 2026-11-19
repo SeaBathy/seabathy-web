@@ -1,6 +1,6 @@
 {
   "name": "seabathy-pwa",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "description": "SeaBathy web app. The app itself has no build step: this file is only for the tests.",
   "license": "GPL-3.0-only",

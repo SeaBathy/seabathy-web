@@ -12,6 +12,9 @@ import { setting } from './db.js';
 import * as gps from './gps.js';
 import { TOP, labelFont } from './basemap.js';
 import { isPicking } from './areapicker.js';
+import { copyOf, letGo, read } from './datafile.js';
+import * as marks from './marks.js';
+import * as tools from './tools.js';
 import { add, card, el, heading, note, openSheet, refreshSheet, row, toast, toggle } from './ui.js';
 
 export const ZONES_CREDIT = 'Marine park zones: DCCEEW, GBRMPA, Queensland Government, NSW DPI, SA DEW, WA DPIRD, CAPAD 2024 (CC BY)';
@@ -27,7 +30,6 @@ const AUTHORITIES = {
   DCCEEW: 'Australian Marine Parks (DCCEEW)', GBRMPA: 'Great Barrier Reef Marine Park Authority', 'Qld Gov': 'Queensland Government',
   'NSW DPI': 'NSW DPI Fisheries', 'SA DEW': 'SA Department for Environment and Water', 'WA DPIRD': 'WA DPIRD fishing orders', CAPAD: 'CAPAD 2024 (park outline)'
 };
-const file = (name) => new URL(`../data/${name}.geojson`, import.meta.url).href;
 /** Every layer here starts "sb-over-": the satellite picture goes under the first of them. */
 const LAYERS = ['sb-over-zones-fill', 'sb-over-zones-line', 'sb-over-zones-label', 'sb-over-names', 'sb-over-ramps'];
 const SOURCES = ['sb-zones', 'sb-names', 'sb-ramps'];
@@ -79,27 +81,6 @@ function rampIcon() {
   shape([[4, 17], [18, 17], [18, 13]]);
   shape([[7, 9], [16, 9], [14, 12], [9, 12]]);
   return c.getImageData(0, 0, canvas.width, canvas.height);
-}
-
-/** Each file switched on, as a local copy the map can read: fetched once, let go when switched off. */
-const copies = new Map();
-
-function copyOf(name) {
-  if (!copies.has(name)) {
-    copies.set(name, fetch(file(name))
-      .then((response) => (response.ok ? response.blob() : Promise.reject(new Error(`${name}: ${response.status}`))))
-      .then((blob) => URL.createObjectURL(blob))
-      .catch((error) => {
-        copies.delete(name);
-        throw error;
-      }));
-  }
-  return copies.get(name);
-}
-
-function letGo(name) {
-  copies.get(name)?.then((url) => URL.revokeObjectURL(url), () => {});
-  copies.delete(name);
 }
 
 let drawing = 0;
@@ -229,7 +210,7 @@ function describeAt(point) {
 
 function showInfo(info) {
   return card({
-    title: info.title, subtitle: info.subtitle || null, paragraphs: info.paragraphs, fine: info.fine, dismissable: true,
+    title: info.title, subtitle: info.subtitle || null, paragraphs: info.paragraphs || [], fine: info.fine, dismissable: true,
     body: null, badge: info.badge, actions: [{ id: 'ok', label: 'Close', primary: true, domId: 'place-close' }]
   });
 }
@@ -257,7 +238,7 @@ const insidePolygon = (rings, x, y) => rings.length > 0 && insideRing(rings[0], 
 
 function loadNoTake() {
   if (!noTakeLoading) {
-    noTakeLoading = copyOf('zones').then((url) => fetch(url)).then((r) => r.json()).then((data) => {
+    noTakeLoading = read('zones').then((data) => {
       const zones = [];
       for (const feature of data.features) {
         if (feature.properties.c !== 'nt' || !feature.geometry) continue;
@@ -328,26 +309,17 @@ async function setMode(mode) {
   apply();
 }
 
-const summary = () => {
-  const on = [state.mode === 'notake' ? 'no-take zones' : state.mode === 'all' ? 'zones' : null, state.names ? 'names' : null, state.ramps ? 'ramps' : null].filter(Boolean);
-  return on.length ? `On: ${on.join(', ')}` : 'Zones, reef and island names, boat ramps: all off';
-};
-
-export function menuRow() {
-  return row('Marine parks and places', summary(), openPanel, { id: 'menu-places' });
-}
-
 const swatch = (colour, text) => el('span', { class: 'swatch' }, el('span', { class: 'swatch-dot', style: `background:${colour}` }), text);
 
 export function openPanel() {
-  openSheet('Marine parks and places', (body) => {
+  openSheet('Australia', (body) => {
     add(body,
-      note('Round Australia. Tap a zone, a name or a ramp on the chart to see what it is.'),
+      note('These layers cover Australian waters only. Everything else in SeaBathy works anywhere in the world. Tap a zone, a name or a ramp on the chart to see what it is.'),
       heading('MARINE PARK ZONES'),
       MODES.map(([mode, label]) => row(label, null, async () => {
         await setMode(mode);
         refreshSheet();
-      }, { value: state.mode === mode ? '✓' : null, id: `zones-${mode}` })),
+      }, { chosen: state.mode === mode, id: `zones-${mode}` })),
       el('div', { class: 'swatches' }, swatch(NO_TAKE, 'No-take'), swatch(LIMITED, 'Limited fishing'), swatch(GENERAL, 'General use')),
       toggle('Warn when the boat enters a no-take zone', 'While zones are shown, the GPS is on and SeaBathy is on the screen', state.warn, (on) => {
         state.warn = on;
@@ -364,9 +336,14 @@ export function openPanel() {
         state.ramps = on;
         apply();
       }, 'places-ramps'),
+      heading('BUOYS AND BEACONS (BETA)'),
+      toggle('Buoys, beacons, pipelines and cables', 'Off again at every start. Not for navigation: positions may be old or wrong', marks.visible(), async (on) => {
+        await marks.setVisible(on);
+        refreshSheet();
+      }, 'places-marks'),
       note('Each of these is fetched the first time it is switched on (the zones are the biggest, about 1 MB) and then kept on this device, so it works with no signal.'),
       heading('CREDITS'),
-      [ZONES_CREDIT, NAMES_CREDIT, RAMPS_CREDIT].map(note));
+      [ZONES_CREDIT, NAMES_CREDIT, RAMPS_CREDIT, marks.CREDIT].map(note));
   });
 }
 
@@ -375,8 +352,10 @@ export async function start(theMap, { onChange = () => {} } = {}) {
   changed = onChange;
   Object.assign(state, await setting.get('places', {}));
   map.on('click', (event) => {
-    if (isPicking() || document.querySelector('.overlay') || LAYERS.every((id) => !map.getLayer(id))) return;
-    const info = describeAt(event.point);
+    // A tool that is on (measuring, a route) has the tap.
+    if (isPicking() || tools.mode() !== 'none' || document.querySelector('.overlay')) return;
+    if (LAYERS.every((id) => !map.getLayer(id)) && !marks.visible()) return;
+    const info = marks.describeAt(event.point) || describeAt(event.point);
     if (info) showInfo(info);
   });
   gps.subscribe((position) => { boatAt(position); });

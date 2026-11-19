@@ -1,6 +1,6 @@
-// Small pieces every screen uses: building elements, the bottom sheet, cards with buttons, the
-// progress card and the short message at the foot of the screen. Text from files and from the
-// user is always put in as text, never as HTML.
+// Small pieces every screen uses: building elements, the Layers panel, the panels (cards over
+// the chart), cards with buttons, the progress card and the short message at the foot of the
+// screen. Text from files and from the user is always put in as text, never as HTML.
 
 export const $ = (selector, root = document) => root.querySelector(selector);
 
@@ -38,6 +38,8 @@ export function svg(markup, cls = '') {
   return holder;
 }
 
+const CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg>';
+
 // ---------------------------------------------------------------- the message at the foot
 
 let toastTimer = 0;
@@ -56,40 +58,50 @@ export function hideToast() {
   $('#toast').hidden = true;
 }
 
-// ---------------------------------------------------------------- the bottom sheet
+// ---------------------------------------------------------------- the panels: cards over the chart
 
 const stack = [];
 
-function showTop() {
-  const sheet = $('#sheet');
+function showTop({ keepPlace = false } = {}) {
+  const layer = $('#sheet-layer');
   const top = stack[stack.length - 1];
   if (!top) {
-    sheet.hidden = true;
+    layer.hidden = true;
     document.body.classList.remove('sheet-open');
     return;
   }
   $('#sheet-title').textContent = top.title;
-  $('#sheet-back').hidden = stack.length < 2;
+  layer.classList.toggle('dock', Boolean(top.dock));
+  layer.classList.toggle('own', Boolean(top.own));
   const body = $('#sheet-body');
+  const place = keepPlace ? body.scrollTop : top.place || 0;
   body.replaceChildren();
-  body.scrollTop = 0;
   top.build(body);
-  sheet.hidden = false;
+  layer.hidden = false;
+  body.scrollTop = place;
   document.body.classList.add('sheet-open');
 }
 
-/** Opens a panel over the map. [build] fills its body; it runs again whenever the panel is shown. */
-export function openSheet(title, build, { root = false } = {}) {
+/**
+ * Opens a panel: a card over the chart, on top of any panel already open. [build] fills its
+ * body; it runs again whenever the panel is shown. [dock] puts the card at the foot of the
+ * screen without a Close of its own (the card for a new waypoint, which has Cancel and Save);
+ * [own] leaves out the Close under a card that ends in buttons of its own.
+ */
+export function openSheet(title, build, { root = false, dock = false, own = false } = {}) {
   if (root) stack.length = 0;
-  stack.push({ title, build });
+  const under = stack[stack.length - 1];
+  if (under) under.place = $('#sheet-body').scrollTop;
+  stack.push({ title, build, dock, own });
   showTop();
 }
 
-/** Draws the open panel again (its data changed). */
+/** Draws the open panel again (its data changed), where it was scrolled to. */
 export function refreshSheet() {
-  if (stack.length) showTop();
+  if (stack.length) showTop({ keepPlace: true });
 }
 
+/** Closes the panel on top: the one under it shows again, or the Layers panel, or the chart. */
 export function backSheet() {
   stack.pop();
   showTop();
@@ -106,35 +118,93 @@ export function backFrom(sheet) {
   if (sheet && topSheet() === sheet) backSheet();
 }
 
+/** Closes every panel and the Layers panel: back to the chart. */
 export function closeSheet() {
   stack.length = 0;
   showTop();
+  closeDrawer();
 }
 
 export const sheetIsOpen = () => stack.length > 0;
 
 export function wireSheet() {
-  $('#sheet-close').addEventListener('click', closeSheet);
+  $('#sheet-close').addEventListener('click', backSheet);
   $('#sheet-back').addEventListener('click', backSheet);
+  // A tap beside the card closes it, as Close does.
+  $('#sheet-layer').addEventListener('click', (event) => { if (event.target === event.currentTarget) backSheet(); });
+  $('#drawer-close').addEventListener('click', closeDrawer);
+  $('#scrim').addEventListener('click', closeDrawer);
+  // While a finger is on a slider in the Layers panel the panel is not drawn again: that would take the slider away.
+  $('#drawer-body').addEventListener('pointerdown', (event) => { if (event.target.matches?.('input[type="range"]')) drawerHeld = true; });
+  for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, () => { drawerHeld = false; });
+}
+
+// ---------------------------------------------------------------- the Layers panel
+
+let drawerBuild = null;
+let drawerHeld = false;
+
+export const drawerIsOpen = () => !$('#drawer').hidden;
+
+function fillDrawer() {
+  const body = $('#drawer-body');
+  const foot = $('#drawer-foot');
+  const at = body.scrollTop;
+  body.replaceChildren();
+  foot.replaceChildren();
+  drawerBuild?.(body, foot);
+  body.scrollTop = at;
+}
+
+/** Opens the Layers panel at the left. [build] fills its body and its foot, and runs again whenever it is drawn. */
+export function openDrawer(build) {
+  drawerBuild = build;
+  fillDrawer();
+  $('#drawer').hidden = false;
+  $('#scrim').hidden = false;
+  document.body.classList.add('drawer-open');
+}
+
+/** Draws the Layers panel again if it is open (a layer or a waypoint changed). */
+export function refreshDrawer() {
+  if (drawerIsOpen() && !drawerHeld) fillDrawer();
+}
+
+export function closeDrawer() {
+  $('#drawer').hidden = true;
+  $('#scrim').hidden = true;
+  document.body.classList.remove('drawer-open');
 }
 
 // ---------------------------------------------------------------- rows and fields for panels
 
-/** A tappable row: a title, a line under it, and an optional value at the right. */
-export function row(title, detail, onClick, { value = null, danger = false, id = null } = {}) {
-  return el('button', { class: `row${danger ? ' danger' : ''}`, type: 'button', onclick: onClick, id },
+/**
+ * A tappable row: a title, a line under it, and an optional value at the right. [chevron]
+ * marks a row that opens something; [chosen] marks the one picked among a few.
+ */
+export function row(title, detail, onClick, { value = null, danger = false, id = null, chevron = false, chosen = false } = {}) {
+  return el('button', { class: `row${danger ? ' danger' : ''}${chosen ? ' chosen' : ''}`, type: 'button', onclick: onClick, id },
     el('span', { class: 'row-text' },
       el('span', { class: 'row-title', text: title }),
       detail ? el('span', { class: 'row-detail', text: detail }) : null),
-    value ? el('span', { class: 'row-value', text: value }) : null);
+    value ? el('span', { class: 'row-value', text: value }) : null,
+    chevron ? svg(CHEVRON, 'row-chevron') : null);
+}
+
+/** A small button with capital letters: on a tool's card, on a layer, beside a waypoint. */
+export function mini(label, onClick, { id = null, accent = false, danger = false, primary = false, cls = '', title = null } = {}) {
+  return el('button', {
+    class: `mini${accent ? ' accent' : ''}${danger ? ' danger' : ''}${primary ? ' primary' : ''}${cls ? ` ${cls}` : ''}`,
+    type: 'button', onclick: onClick, id, text: label, 'aria-label': title
+  });
 }
 
 export const heading = (text) => el('div', { class: 'heading', text });
 export const note = (text) => el('p', { class: 'note', text });
 
-export function button(label, onClick, { primary = false, danger = false, id = null } = {}) {
+export function button(label, onClick, { primary = false, danger = false, go = false, id = null } = {}) {
   return el('button', {
-    class: `btn${primary ? ' primary' : ''}${danger ? ' danger' : ''}`, type: 'button', onclick: onClick, id, text: label
+    class: `btn${primary ? ' primary' : ''}${danger ? ' danger' : ''}${go ? ' go' : ''}`, type: 'button', onclick: onClick, id, text: label
   });
 }
 
@@ -163,6 +233,20 @@ export function slider(title, { min, max, step, value, format, onInput, onChange
   return el('div', { class: 'slider' }, el('div', { class: 'slider-head' }, el('span', { class: 'row-title', text: title }), shown), input);
 }
 
+/**
+ * A panel of a few choices, the one in use marked. [entries] are [id, name, detail]; picking
+ * one runs [pick] and goes back to the panel it was opened from.
+ */
+export function chooser(title, entries, current, pick, idOf = () => null) {
+  openSheet(title, (body) => {
+    const here = topSheet();
+    add(body, entries.map(([id, name, detail]) => row(name, detail || null, async () => {
+      await pick(id);
+      backFrom(here);
+    }, { chosen: id === current, id: idOf(id) })));
+  });
+}
+
 // ---------------------------------------------------------------- cards over everything
 
 /**
@@ -183,7 +267,7 @@ export function card({ badge = null, title, subtitle = null, paragraphs = [], fi
         paragraphs.map((p) => el('p', { class: 'card-text', text: p })),
         body,
         fine ? el('p', { class: 'card-fine', text: fine }) : null,
-        el('div', { class: 'card-actions' },
+        el('div', { class: `card-actions${actions.length > 2 ? ' three' : ''}` },
           actions.map((a) => button(a.label, () => done(a.id), { primary: a.primary, danger: a.danger, id: a.domId })))));
     document.body.append(layer);
   });
@@ -233,6 +317,27 @@ export function progressCard(title, hint = null) {
     },
     close: () => layer.remove()
   };
+}
+
+/**
+ * Hands a file the app made to the phone's share sheet, or saves it as a download where there
+ * is none. [done] is said after a download.
+ */
+export async function saveFile(file, { title = 'SeaBathy', done = `Saved ${file.name}` } = {}) {
+  try {
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title });
+      return;
+    }
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+  }
+  const link = el('a', { href: URL.createObjectURL(file), download: file.name });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+  toast(done);
 }
 
 /** Loads one of the app's own script files once (the bigger libraries wait until they're needed). */

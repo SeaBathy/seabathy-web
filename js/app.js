@@ -17,25 +17,13 @@ import * as updates from './updates.js';
 import { isPicking } from './areapicker.js';
 import * as places from './places.js';
 import * as units from './units.js';
-import { $, card, toast, wireSheet, sheetIsOpen } from './ui.js';
+import * as tools from './tools.js';
+import * as routes from './routes.js';
+import * as marks from './marks.js';
+import { $, card, toast, wireSheet, sheetIsOpen, drawerIsOpen } from './ui.js';
 
 const HOLD_MS = 600;
 const HOLD_SLOP_PX = 10;
-
-/** Degrees and decimal minutes, as on a plotter: 20°17.123′S 148°57.456′E. */
-function formatPosition(lat, lng) {
-  const part = (value, positive, negative, width) => {
-    const abs = Math.abs(value);
-    let degrees = Math.floor(abs);
-    let minutes = (abs - degrees) * 60;
-    if (minutes >= 59.9995) {
-      degrees += 1;
-      minutes = 0;
-    }
-    return `${String(degrees).padStart(width, '0')}°${minutes.toFixed(3).padStart(6, '0')}′${value < 0 ? negative : positive}`;
-  };
-  return `${part(lat, 'N', 'S', 2)} ${part(lng, 'E', 'W', 3)}`;
-}
 
 const formatDepth = (metres) => units.depthText(metres);
 
@@ -45,7 +33,8 @@ function wireHold(map) {
   let start = null;
   let lastAdd = 0;
   const add = (lngLat) => {
-    if (Date.now() - lastAdd < 1000 || sheetIsOpen()) return;
+    // Not while a panel or the Layers panel is open, or a tool (a waypoint, measuring, a route) is taking the taps.
+    if (Date.now() - lastAdd < 1000 || sheetIsOpen() || drawerIsOpen() || tools.mode() !== 'none') return;
     lastAdd = Date.now();
     waypoints.addAt(lngLat.lng, lngLat.lat);
   };
@@ -84,7 +73,7 @@ function wireReadout(map) {
   const depth = $('#readout-depth');
   const showPosition = () => {
     const centre = map.getCenter().wrap();
-    position.textContent = formatPosition(centre.lat, centre.lng);
+    position.textContent = units.positionText(centre.lat, centre.lng);
   };
   const showDepth = async () => {
     const mine = ++asked;
@@ -101,7 +90,10 @@ function wireReadout(map) {
     depthTimer = setTimeout(showDepth, 180);
   });
   map.on('idle', showDepth);
-  units.onChange(showDepth);
+  units.onChange(() => {
+    showPosition();
+    showDepth();
+  });
   map.on('moveend', () => {
     clearTimeout(cameraTimer);
     cameraTimer = setTimeout(() => {
@@ -116,7 +108,10 @@ async function boot() {
   wireSheet();
   // Nothing in use that loading the page again would lose: no panel or card open, no area being
   // drawn, 3D closed, GPS off, and no chart held only in memory.
-  await updates.start(() => !sheetIsOpen() && !isPicking() && !terrain.isOpen() && !gps.isOn() && !document.querySelector('.overlay') && !charts.list().some((c) => c.session));
+  await updates.start(() => !sheetIsOpen() && !drawerIsOpen() && !isPicking() && tools.mode() === 'none' && !tools.mobActive() && !terrain.isOpen() && !gps.isOn()
+    && !document.querySelector('.overlay') && !charts.list().some((c) => c.session));
+  document.body.classList.toggle('night', Boolean(await db.setting.get('night', false)));
+  document.body.classList.toggle('no-crosshair-depth', !(await db.setting.get('crosshairDepth', true)));
   // The first start shows the whole world; after that, where the chart was left.
   const camera = await db.setting.get('camera', { center: [20, 5], zoom: 1 });
   setWorkerUrl(new URL('../vendor/maplibre-gl-worker.js', import.meta.url).href);
@@ -145,6 +140,7 @@ async function boot() {
     changed: () => {
       view3d?.changed();
       basemap.refreshCredits();
+      panels.refreshMenu();
     }
   });
   await waypoints.start(map);
@@ -152,21 +148,23 @@ async function boot() {
   panels.begin(map);
   view3d = await terrain.start(map);
   await places.start(map, { onChange: () => basemap.refreshCredits() });
+  marks.start(map, { onChange: () => basemap.refreshCredits() });
+  tools.start(map);
+  await routes.start(map);
   await basemap.start(map, {
     installed: () => {
       charts.addAll();
       places.install();
+      marks.install();
+      tools.installLayers();
+      routes.installLayers();
       gps.installLayers();
     },
     message: toast,
-    credits: () => [...charts.credits(), ...places.credits()]
+    credits: () => [...charts.credits(), ...places.credits(), ...marks.credits()]
   });
 
   $('#btn-menu').addEventListener('click', panels.openMenu);
-  $('#btn-add').addEventListener('click', () => {
-    const centre = map.getCenter().wrap();
-    waypoints.addAt(centre.lng, centre.lat);
-  });
   wireHold(map);
   wireReadout(map);
   // The credit line is short on a phone: a tap shows every credit in full.
@@ -174,12 +172,12 @@ async function boot() {
     if (document.querySelector('.overlay')) return;
     card({
       title: 'Map and depth credits', subtitle: 'Not for navigation.', paragraphs: basemap.creditParts(), dismissable: true,
-      fine: 'More about each source: Menu, About.', actions: [{ id: 'ok', label: 'Close', primary: true, domId: 'credits-close' }]
+      fine: 'More about each source: Settings, About.', actions: [{ id: 'ok', label: 'Close', primary: true, domId: 'credits-close' }]
     });
   });
 
   // For the tests, and for looking into a problem from the browser's console.
-  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, places, units, version: install.VERSION };
+  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, places, units, tools, routes, marks, version: install.VERSION };
   document.body.classList.add('ready');
   sessionStorage.removeItem('startTries');
 

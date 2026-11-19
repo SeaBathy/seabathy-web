@@ -57,8 +57,6 @@ await settle(4000);
 await idle();
 
 await page.click('#btn-menu');
-await settle(300);
-await shot('menu');
 await page.click('#menu-seabed');
 await settle(300);
 await shot('get-depths');
@@ -84,13 +82,36 @@ await idle();
 await settle(600);
 await shot('chart');
 
+// The Layers panel with the depth layer in it, then the layer's colours, then Settings.
 await page.click('#btn-menu');
-await page.click('#menu-charts');
-await page.locator('#sheet-body .row').first().click();
+await settle(400);
+await shot('menu');
+await page.click('.layer-more');
 await page.locator('#ramp-palette').scrollIntoViewIfNeeded();
 await settle(400);
 await shot('depth-colours');
-await page.evaluate(() => document.querySelector('#sheet-close').click());
+await page.click('#sheet-close');
+await page.click('#menu-settings');
+await settle(400);
+await shot('settings');
+await page.click('#sheet-close');
+await page.click('#drawer-close');
+
+// A route across the water, with the card that says its legs.
+await page.click('#btn-route');
+for (const [lng, lat] of [[148.905, -20.055], [148.93, -20.042], [148.958, -20.05]]) {
+  await page.evaluate(([x, y]) => window.seabathy.map.jumpTo({ center: [x, y] }), [lng, lat]);
+  await settle(250);
+  await page.mouse.click(width * 0.5, height * 0.3);
+}
+await page.evaluate(() => window.seabathy.map.jumpTo({ center: [148.932, -20.062], zoom: 12.3 }));
+await settle(1500);
+await idle();
+await shot('route');
+await page.click('#route-clear');
+await page.click('#btn-route');
+await page.evaluate(() => window.seabathy.map.jumpTo({ center: [148.936, -20.046], zoom: 12.6 }));
+await settle(800);
 
 await page.click('#btn-3d');
 await ready3d();

@@ -1,5 +1,5 @@
-// The panels that open from the menu: charts and their colours, maps, saving an area for
-// offline use, and storage.
+// The Layers panel and the panels that open from it: Settings and its groups, a layer's depth
+// colours, maps, saving an area for offline use, and storage. Laid out as the Android app's are.
 
 import * as charts from './charts.js';
 import * as basemap from './basemap.js';
@@ -8,60 +8,271 @@ import * as files from './files.js';
 import * as waypoints from './waypoints.js';
 import { setting } from './db.js';
 import { PALETTES, drawLegend, normalised, MAX_HILLSHADE_EXAGGERATION } from './depth.js';
-import { add, el, toast, openSheet, refreshSheet, topSheet, backFrom, closeSheet, row, button, field, heading, note, toggle, slider, confirmCard, progressCard, holdScreenOn, card } from './ui.js';
+import { add, el, toast, openSheet, refreshSheet, topSheet, backFrom, closeSheet, row, button, field, heading, note, toggle, slider, confirmCard, progressCard, holdScreenOn, card, openDrawer, closeDrawer, refreshDrawer, mini, chooser } from './ui.js';
 import { openAbout, openInstall, canInstall } from './install.js';
 import * as seabed from './seabed.js';
 import * as terrain from './terrain.js';
 import * as places from './places.js';
 import * as units from './units.js';
+import * as routes from './routes.js';
+import * as backup from './backup.js';
+import { VERSION } from './install.js';
 
 let map = null;
 
 export function begin(theMap) {
   map = theMap;
+  // The Layers panel lists the waypoints: it is drawn again when one changes.
+  waypoints.onChange(refreshDrawer);
 }
 
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
-function describe(chart) {
-  const size = chart.size ? ` · ${files.formatBytes(chart.size)}` : '';
-  if (chart.kind === 'geotiff') return `${/^Seabed /.test(chart.name) ? 'Seabed depths' : 'Depth survey'}${size}`;
-  const what = chart.view === 'vector' ? 'Depth chart' : chart.view === 'depth' ? 'Depth grid' : 'Chart picture';
-  return chart.where === 'remote' ? `${what}, read from the web` : `${what} on this phone${size}`;
+/** What a layer is, in a few words. */
+function kindOf(chart) {
+  if (chart.kind === 'geotiff') return /^Seabed /.test(chart.name) ? 'Seabed depths' : 'Depth survey';
+  return chart.view === 'vector' ? 'Depth chart' : chart.view === 'depth' ? 'Depth grid' : 'Chart picture';
 }
 
-// ---------------------------------------------------------------- the menu
+function describe(chart) {
+  const size = chart.size ? ` · ${files.formatBytes(chart.size)}` : '';
+  if (chart.kind === 'geotiff') return `${kindOf(chart)}${size}`;
+  return chart.where === 'remote' ? `${kindOf(chart)}, read from the web` : `${kindOf(chart)} on this phone${size}`;
+}
 
+const isColoured = (chart) => chart.view === 'depth' || (chart.view === 'vector' && Boolean(chart.depthField));
+const percent = (fraction) => `${Math.round(fraction * 100)}%`;
+
+/** The line under a layer's name: what it is, its depth range when it has colours, and how see-through it is. */
+function layerLine(chart) {
+  const parts = [chart.where === 'remote' ? `${kindOf(chart)}, web` : kindOf(chart)];
+  if (isColoured(chart)) {
+    const ramp = normalised(chart.ramp);
+    parts.push(`${Math.round(-ramp.shallowMetres)} to ${Math.round(-ramp.deepMetres)} m`);
+  }
+  parts.push(percent(chart.opacity ?? 1));
+  return parts.join(' • ');
+}
+
+// ---------------------------------------------------------------- the Layers panel
+
+/** Gives a layer a name of the person's own. Only the name shown in the app changes. */
+async function renameLayer(chart) {
+  const name = el('input', { type: 'text', id: 'chart-name', class: 'plain-input', value: chart.name, maxLength: 80, autocomplete: 'off', placeholder: 'Layer name' });
+  const answer = await card({
+    title: 'Rename layer', body: [name], dismissable: true,
+    actions: [{ id: 'no', label: 'Cancel' }, { id: 'yes', label: 'Save', primary: true, domId: 'chart-name-save' }]
+  });
+  const wanted = name.value.trim();
+  if (answer !== 'yes' || !wanted || wanted === chart.name) return;
+  chart.name = wanted;
+  await charts.restyle(chart);
+}
+
+async function removeLayer(chart) {
+  const what = chart.where === 'remote' ? 'It is removed from the app, with any areas of it saved for offline.' : "The copy kept in the app is removed. The file you loaded it from isn't touched.";
+  if (!(await confirmCard(`Remove ${chart.name}?`, what, 'Remove', { danger: true }))) return;
+  await charts.remove(chart);
+}
+
+/** One layer: its name (a tap goes to it) and switch, how see-through it is, and what can be done with it. */
+function layerCard(chart) {
+  let timer = 0;
+  const line = el('span', { class: 'layer-sub', text: layerLine(chart) });
+  const opacity = el('input', {
+    type: 'range', min: 0.1, max: 1, step: 0.05, value: chart.opacity ?? 1, 'aria-label': `Opacity for ${chart.name}`,
+    oninput: () => {
+      chart.opacity = Number(opacity.value);
+      line.textContent = layerLine(chart);
+      // The chart changes a moment after the last touch, not on every step.
+      clearTimeout(timer);
+      timer = setTimeout(() => charts.restyle(chart), 160);
+    }
+  });
+  const shown = el('input', {
+    type: 'checkbox', checked: chart.visible !== false, 'aria-label': `Show ${chart.name}`,
+    onchange: async () => {
+      chart.visible = shown.checked;
+      await charts.restyle(chart);
+      basemap.refreshCredits();
+    }
+  });
+  return el('div', { class: 'layer', id: `layer-${chart.id}` },
+    el('div', { class: 'layer-top' },
+      el('button', {
+        class: 'layer-name', type: 'button', 'aria-label': `Go to ${chart.name} on the map`,
+        onclick: () => {
+          closeDrawer();
+          charts.flyTo(chart);
+        }
+      }, el('span', { class: 'layer-title', text: chart.name }), line),
+      shown),
+    opacity,
+    el('div', { class: 'layer-chips' },
+      el('span', { class: 'gap' }),
+      mini('Rename', () => renameLayer(chart), { cls: 'layer-rename', title: `Rename ${chart.name}` }),
+      mini('Remove', () => removeLayer(chart), { danger: true, cls: 'layer-remove', title: `Remove ${chart.name}` })),
+    el('div', { class: 'layer-chips wide' },
+      mini(isColoured(chart) ? 'Colours' : 'Options', () => openChart(chart), { cls: 'layer-more', title: `Depth colours and options for ${chart.name}` }),
+      chart.kind === 'geotiff' ? mini('3D view', () => terrain.open(chart), { cls: 'layer-3d', title: `Show ${chart.name} in 3D` }) : null));
+}
+
+/** The satellite picture, listed with the layers: it is drawn over them, so it comes first. */
+function satelliteCard() {
+  const s = basemap.state;
+  const text = () => (s.satOn ? `${basemap.satelliteById(s.satId).label} • ${percent(s.satOpacity)}` : 'Online picture • off');
+  const line = el('span', { class: 'layer-sub', text: text() });
+  const opacity = el('input', {
+    type: 'range', min: 0.1, max: 1, step: 0.05, value: s.satOpacity, 'aria-label': 'Opacity for the satellite picture', disabled: !s.satOn,
+    oninput: () => {
+      basemap.setSatellite({ satOpacity: Number(opacity.value) });
+      line.textContent = text();
+    }
+  });
+  const shown = el('input', {
+    type: 'checkbox', checked: s.satOn, 'aria-label': 'Show the satellite picture',
+    onchange: async () => {
+      await basemap.setSatellite({ satOn: shown.checked });
+      refreshDrawer();
+    }
+  });
+  return el('div', { class: 'layer', id: 'layer-sat' },
+    el('div', { class: 'layer-top' },
+      el('button', { class: 'layer-name', type: 'button', onclick: openMaps }, el('span', { class: 'layer-title', text: 'Satellite picture' }), line),
+      shown),
+    s.satOn ? opacity : null);
+}
+
+/** The Layers panel: Settings, the map layers, the waypoints, and the basemap at its foot. */
 export function openMenu() {
-  openSheet('SeaBathy', (body) => {
-    add(body, 
+  openDrawer((body, foot) => {
+    const layers = [...charts.list()].reverse();
+    const pick = el('select', {
+      class: 'spinner', id: 'drawer-basemap', 'aria-label': 'Basemap',
+      onchange: async () => {
+        await basemap.setBasemap(pick.value);
+        refreshDrawer();
+      }
+    }, basemap.BASEMAPS.filter((b) => b.id !== 'custom' || basemap.state.customUrl).map((b) => el('option', { value: b.id, text: b.label, selected: basemap.state.basemap === b.id })));
+    add(body,
+      row('Settings', null, openSettings, { id: 'menu-settings', chevron: true }),
+      el('div', { class: 'drawer-label', text: 'Map layers' }),
+      satelliteCard(),
+      layers.length ? layers.map(layerCard) : el('div', { class: 'drawer-empty', id: 'layers-empty', text: 'No depth layers loaded yet' }),
+      el('button', { class: 'drawer-link', type: 'button', id: 'menu-seabed', text: '＋  Get seabed depths', onclick: () => seabed.show(map) }),
+      el('div', { class: 'drawer-label', text: 'Waypoints' }),
+      waypoints.drawerSection());
+    add(foot, el('div', { class: 'drawer-label', text: 'Basemap' }), pick);
+  });
+}
+
+/** Draws the Layers panel again when what it lists has changed. */
+export const refreshMenu = refreshDrawer;
+
+// ---------------------------------------------------------------- Settings
+
+/** Settings: its groups, each a card of its own, as in the Android app. */
+function openSettings() {
+  openSheet('Settings', (body) => {
+    add(body,
       canInstall() ? row('Install SeaBathy', 'Its own icon and window, without the address bar', openInstall, { id: 'menu-install' }) : null,
-      row('Get seabed depths', 'Draw an area and download free depths for it, anywhere in the world. They work offline and in 3D', () => seabed.show(map), { id: 'menu-seabed' }),
-      row('Charts', charts.list().length ? plural(charts.list().length, 'chart') : 'Your depth layers, and files of your own', openCharts, { id: 'menu-charts' }),
-      row('Maps', `${basemap.basemapById(basemap.state.basemap).label}${basemap.state.satOn ? ' with satellite' : ''}`, openMaps, { id: 'menu-maps' }),
-      row('Waypoints', waypoints.list().length ? `${plural(waypoints.list().length, 'waypoint')} saved` : 'Mark spots, back them up as GPX', waypoints.openList, { id: 'menu-waypoints' }),
-      row('Save for offline', 'Keep the area on screen for use with no signal', openOffline, { id: 'menu-offline' }),
-      places.menuRow(),
-      storageRow(),
-      row('Settings', `Depths in ${units.depthUnit().name.toLowerCase()}, speed in ${units.speedUnit().name.toLowerCase()}`, openSettings, { id: 'menu-settings' }),
-      row('About and safety', 'Not for navigation, how to install, updates, credits', openAbout, { id: 'menu-about' }));
+      row('Map display', 'Coordinates, crosshair depth, waypoint names, night filter', openDisplay, { id: 'settings-display' }),
+      row('Depths', 'Seabed downloads, your own files, depth colours', openDepths, { id: 'menu-charts' }),
+      row('Online and offline maps', 'Satellite and other map layers, save maps offline', openOnline, { id: 'settings-maps' }),
+      row('Boat and navigation', 'Units, saved routes', openBoat, { id: 'settings-boat' }),
+      row('Australia', 'Marine park zones, reef names, boat ramps, buoys', places.openPanel, { id: 'menu-places' }),
+      row('Waypoints and backup', 'Backup, GPX in and out', openBackup, { id: 'settings-backup' }),
+      row('About', 'Safety and terms, privacy, licences, updates', openAbout, { id: 'menu-about' }));
   }, { root: true });
 }
 
-/** The menu's Storage row, with the space the app is using filled in once it's known. */
-function openSettings() {
-  openSheet('Settings', (body) => {
-    const choice = (all, current, key) => Object.entries(all).map(([id, unit]) => row(unit.name, null, async () => {
-      await units.set({ [key]: id });
-      refreshSheet();
-    }, { value: current === id ? '✓' : null, id: `unit-${key}-${id}` }));
+const positionChoices = () => Object.entries(units.POSITIONS).map(([id, form]) => [id, form.name, form.example]);
+
+function openDisplay() {
+  openSheet('Map display', (body) => {
     add(body,
-      heading('DEPTHS IN'),
-      choice(units.DEPTHS, units.state.depth, 'depth'),
-      heading('SPEED IN'),
-      choice(units.SPEEDS, units.state.speed, 'speed'),
-      note('Depths are shown this way at the crosshair and in 3D. A chart\'s colour range is always set in metres.'));
+      row('Coordinates', units.POSITIONS[units.state.position]?.name, () => chooser('Coordinates', positionChoices(), units.state.position,
+        (id) => units.set({ position: id }), (id) => `unit-position-${id}`), { id: 'display-position' }),
+      toggle('Crosshair depth', 'The depth under the crosshair, from your depth layers', !document.body.classList.contains('no-crosshair-depth'), async (on) => {
+        document.body.classList.toggle('no-crosshair-depth', !on);
+        await setting.set('crosshairDepth', on);
+      }, 'setting-crosshair-depth'),
+      toggle('Show waypoint names on map', null, waypoints.showsNames(), (on) => waypoints.setShowNames(on), 'setting-names'),
+      toggle('Night red filter', 'A dim red screen, to keep your night vision', document.body.classList.contains('night'), async (on) => {
+        document.body.classList.toggle('night', on);
+        await setting.set('night', on);
+      }, 'setting-night'));
   });
+}
+
+function openBoat() {
+  openSheet('Boat and navigation', (body) => {
+    const pick = (title, all, key) => () => chooser(title, Object.entries(all).map(([id, unit]) => [id, `${unit.name} (${unit.label})`]), units.state[key],
+      (id) => units.set({ [key]: id }), (id) => `unit-${key}-${id}`);
+    add(body,
+      heading('UNITS'),
+      row('Depth', units.depthUnit().label, pick('Depth', units.DEPTHS, 'depth'), { id: 'boat-depth' }),
+      row('Speed', units.speedUnit().label, pick('Speed', units.SPEEDS, 'speed'), { id: 'boat-speed' }),
+      note("Depths are shown this way at the crosshair and in 3D. A layer's colour range is always set in metres. Distances are in nautical miles and bearings are true."),
+      heading('ROUTES'),
+      row('Saved routes', routes.list().length ? `${plural(routes.list().length, 'route')}: load, rename, export` : 'Load, rename, export', routes.openLibrary, { id: 'menu-routes' }),
+      note('Plan a route with the route tool on the top bar. The cruise speed for its times is set on the route card.'));
+  });
+}
+
+function openOnline() {
+  openSheet('Online and offline maps', (body) => {
+    add(body,
+      row('Online map layers', `${basemap.basemapById(basemap.state.basemap).label}${basemap.state.satOn ? ', with the satellite picture' : ''}`, openMaps, { id: 'menu-maps' }),
+      row('Offline maps', 'Download the area on screen', openOffline, { id: 'menu-offline' }),
+      storageRow());
+  });
+}
+
+function openBackup() {
+  openSheet('Waypoints and backup', (body) => {
+    const restore = el('input', {
+      type: 'file', id: 'backup-file', accept: '.json,application/json', hidden: true,
+      onchange: () => {
+        const file = restore.files[0];
+        restore.value = '';
+        if (file) restoreFrom(file);
+      }
+    });
+    const gpx = waypoints.gpxPicker();
+    add(body,
+      note('A backup holds your waypoints, routes and settings in one file. Depth layers and saved map areas are not in it: they can be downloaded again.'),
+      row('Back up now', 'Save a backup file where you choose', () => backup.save(VERSION), { id: 'backup-save' }),
+      row('Restore a backup', 'From a SeaBathy web app backup file', () => restore.click(), { id: 'backup-restore' }),
+      restore,
+      row('Import GPX', 'From a plotter, the Android app or another app', () => gpx.click(), { id: 'gpx-import' }),
+      gpx,
+      row('Export waypoints and routes', 'Share as a GPX file', () => waypoints.exportGpx(routes.list()), { id: 'gpx-export' }));
+  });
+}
+
+/** Reads a backup file and adds what it holds, asking first whether its settings should replace this device's. */
+async function restoreFrom(file) {
+  let found;
+  try {
+    found = backup.read(await file.text());
+  } catch (error) {
+    toast(error.message || "Couldn't read that file.", 6000);
+    return;
+  }
+  const count = `${plural(found.waypoints.length, 'waypoint')} and ${plural((found.routes || []).length, 'route')}`;
+  const answer = await card({
+    title: 'Restore this backup?', dismissable: true,
+    paragraphs: [`It holds ${count}, made ${String(found.created || '').slice(0, 10) || 'at an unknown date'}. Those not already here are added; nothing here is removed.`,
+      'Its settings (units, basemap, switches) can replace the ones on this device too.'],
+    actions: [{ id: 'no', label: 'Cancel' }, { id: 'marks', label: 'Marks only', domId: 'restore-marks' }, { id: 'all', label: 'With settings', primary: true, domId: 'restore-all' }]
+  });
+  if (answer !== 'marks' && answer !== 'all') return;
+  const done = await backup.restore(found, { withSettings: answer === 'all' });
+  toast(`Added ${plural(done.waypoints, 'waypoint')} and ${plural(done.routes, 'route')}${done.already ? `; ${done.already} already here` : ''}.`, 6000);
+  // The settings are read when the app starts.
+  if (done.settings) setTimeout(() => location.reload(), 1500);
+  else refreshSheet();
 }
 
 function storageRow() {
@@ -72,7 +283,7 @@ function storageRow() {
   return node;
 }
 
-// ---------------------------------------------------------------- charts
+// ---------------------------------------------------------------- depths
 
 /** Runs a long import behind a progress card and reports how it went. */
 async function importing(title, work) {
@@ -96,7 +307,7 @@ async function importing(title, work) {
     else if (files.isFull(error)) {
       await card({
         title: 'Not enough space', dismissable: true,
-        paragraphs: ["The phone has no room for this file. Free up space, or delete a chart under Storage, and try again."],
+        paragraphs: ['The phone has no room for this file. Free up space, or remove a layer, and try again.'],
         actions: [{ id: 'ok', label: 'OK', primary: true }]
       });
     } else toast(error.message || "Couldn't load that file.", 7000);
@@ -105,30 +316,12 @@ async function importing(title, work) {
   }
 }
 
-function openCharts() {
-  openSheet('Charts', (body) => {
-    const picker = el('input', {
-      // No "accept": an iPhone greys out file types it doesn't know, .pmtiles among them.
-      type: 'file', id: 'chart-file', hidden: true,
-      onchange: () => {
-        const file = picker.files[0];
-        picker.value = '';
-        if (!file) return;
-        if (/\.pmtiles$/i.test(file.name)) importing('Loading the chart', (p) => charts.importPmtiles(file, p));
-        else if (/\.(tiff?|geotiff)$/i.test(file.name)) importing('Loading the survey', (p) => charts.importTiff(file, p));
-        else if (/\.mbtiles$/i.test(file.name)) toast("MBTiles files can't be read here. Convert it to PMTiles first: the guide in About says how.", 8000);
-        else toast('Pick a .pmtiles chart or a .tif depth survey.', 6000);
-      }
-    });
+/** A PMTiles chart read over the internet from an address the person types. */
+function openWebChart() {
+  openSheet('Chart from a web address', (body) => {
     const url = el('input', { type: 'url', id: 'chart-url', placeholder: 'https://…/chart.pmtiles', autocomplete: 'off', autocapitalize: 'off', spellcheck: false });
-    const list = charts.list();
-    add(body, 
-      list.length ? [...list].reverse().map((c) => row(c.name, describe(c), () => openChart(c), { value: c.visible === false ? 'Hidden' : null })) : note('Nothing here yet. Get free seabed depths for the area on screen, or load a file of your own.'),
-      heading('ADD'),
-      row('Get seabed depths', 'Free, for the area on screen, anywhere in the world', () => seabed.show(map), { id: 'chart-seabed' }),
-      row('Load a file from this phone', 'A .pmtiles chart or a .tif depth survey', () => picker.click(), { id: 'chart-load' }),
-      picker,
-      field('Or read a PMTiles chart from a web address', url),
+    add(body,
+      field('Address of a PMTiles chart', url),
       el('div', { class: 'actions' }, button('Add', async () => {
         try {
           const chart = await charts.addRemote(url.value);
@@ -139,6 +332,35 @@ function openCharts() {
           toast(error.message || "Couldn't add that chart.", 7000);
         }
       }, { primary: true, id: 'chart-add-url' })),
+      note("The chart stays on its own server and is read a piece at a time. Add only a chart whose owner allows it."));
+  });
+}
+
+function openDepths() {
+  openSheet('Depths', (body) => {
+    const picker = el('input', {
+      // No "accept": an iPhone greys out file types it doesn't know, .pmtiles among them.
+      type: 'file', id: 'chart-file', hidden: true,
+      onchange: () => {
+        const file = picker.files[0];
+        picker.value = '';
+        if (!file) return;
+        if (/\.pmtiles$/i.test(file.name)) importing('Loading the chart', (p) => charts.importPmtiles(file, p));
+        else if (/\.(tiff?|geotiff)$/i.test(file.name)) importing('Loading the survey', (p) => charts.importTiff(file, p));
+        else if (/\.mbtiles$/i.test(file.name)) toast("MBTiles files can't be read here. Convert it to PMTiles first: About says how.", 8000);
+        else toast('Pick a .tif depth survey or a .pmtiles chart.', 6000);
+      }
+    });
+    add(body,
+      row('Get seabed depths', 'Draw the area on the chart. Free depth data, anywhere in the world', () => seabed.show(map), { id: 'chart-seabed' }),
+      row('Load GeoTIFF or PMTiles file', 'Depth surveys (.tif) and charts (.pmtiles) from this device', () => picker.click(), { id: 'chart-load' }),
+      picker,
+      row('Chart from a web address', 'A PMTiles chart read over the internet', openWebChart, { id: 'chart-web' }),
+      heading('DEPTH COLOURS'),
+      note('Colours and depth range are set for each layer. Depths outside the range are hidden.'),
+      charts.list().some(isColoured)
+        ? [...charts.list()].reverse().filter(isColoured).map((c) => row(c.name, 'Palette, depth range, shading', () => openChart(c)))
+        : note('No depth layers yet.'),
       note('A loaded file is copied into the app, so it needs free space of about twice its size while it loads. Keep the original as your backup.'));
   });
 }
@@ -150,6 +372,7 @@ const RANGES = [
   ['Offshore: 20 to 500 m', 20, 500]
 ];
 
+/** A layer's own panel: what its values mean, and its depth colours. */
 function openChart(chart) {
   let timer = 0;
   // Sliders and typing change the chart a moment after the last touch, not on every step.
@@ -158,21 +381,15 @@ function openChart(chart) {
     timer = setTimeout(() => charts.restyle(chart), 160);
   };
   openSheet(chart.name, (body) => {
-    const here = topSheet();
-    const coloured = chart.view === 'depth' || (chart.view === 'vector' && chart.depthField);
-    add(body, 
-      note(describe(chart)),
-      chart.kind === 'geotiff' ? row('See it in 3D', 'Fly over the seabed: height up to 100 times, depth bands, contours, satellite on top', () => terrain.open(chart), { id: 'chart-3d' }) : null,
-      toggle('Show on the chart', null, chart.visible !== false, (on) => { chart.visible = on; charts.restyle(chart); basemap.refreshCredits(); }, 'chart-visible'),
-      slider('Opacity', { min: 0.1, max: 1, step: 0.05, value: chart.opacity ?? 1, format: (v) => `${Math.round(v * 100)}%`, onInput: (v) => { chart.opacity = v; soon(); }, id: 'chart-opacity' }),
-      row('Go to this chart', null, () => { closeSheet(); charts.flyTo(chart); }));
+    const coloured = isColoured(chart);
+    add(body, note(describe(chart)));
 
     if (chart.view === 'vector') {
       const fields = charts.numberFields(chart);
       const pick = el('select', { id: 'chart-field', onchange: () => { chart.depthField = pick.value || null; chart.positiveDown = null; charts.restyle(chart); refreshSheet(); } },
         el('option', { value: '', text: 'None: one plain colour' }),
         fields.map((name) => el('option', { value: name, text: name, selected: name === chart.depthField })));
-      add(body, heading('DEPTHS'), field('Which value is the depth', pick));
+      add(body, field('Which value is the depth', pick));
       if (chart.depthField) {
         add(body, toggle('Depths are written as positive numbers', 'Off when deeper water has lower (negative) values', chart.positiveDown === true, (on) => { chart.positiveDown = on; charts.restyle(chart); }));
       }
@@ -188,7 +405,7 @@ function openChart(chart) {
       },
       [['picture', 'A chart picture: show it as it is'], ['terrarium', 'Depths (Terrarium tiles)'], ['mapbox', 'Depths (Mapbox Terrain-RGB tiles)']].map(([value, text]) =>
         el('option', { value, text, selected: (chart.view === 'picture' ? 'picture' : chart.encoding) === value })));
-      add(body, heading('WHAT IT HOLDS'), field('These tiles are', pick));
+      add(body, field('These tiles are', pick));
     }
 
     if (coloured) {
@@ -209,14 +426,14 @@ function openChart(chart) {
       const palette = el('select', { id: 'ramp-palette', onchange: () => { chart.ramp = { ...chart.ramp, paletteId: palette.value }; paint(); soon(); } },
         PALETTES.map((p) => el('option', { value: p.id, text: p.label, selected: p.id === ramp.paletteId })));
       paint();
-      add(body, 
+      add(body,
         heading('DEPTH COLOURS'),
         field('Palette', palette),
         legend,
         el('div', { class: 'pair' }, field('From depth (m)', from), field('To depth (m)', to)),
-        row("Fit to this chart's depths", chart.view === 'vector' ? 'From the part now on screen' : null, () => {
+        row("Fit to this layer's depths", chart.view === 'vector' ? 'From the part now on screen' : null, () => {
           const fit = charts.fittedRange(chart);
-          if (!fit) toast('Zoom to the chart first, so its depths are on screen.');
+          if (!fit) toast('Zoom to the layer first, so its depths are on screen.');
           else setRange(-fit[0], -fit[1]);
         }, { id: 'ramp-fit' }),
         RANGES.map(([label, a, b]) => row(label, null, () => setRange(a, b))),
@@ -230,20 +447,14 @@ function openChart(chart) {
       }
     }
 
-    add(body, heading('MORE'));
-    if (chart.where === 'remote') add(body, row('Save an area of it offline', 'For use with no signal', openOffline));
-    add(body, row('Delete this chart', chart.where === 'remote' ? 'Removes it and its saved areas' : 'Removes the copy kept in the app', async () => {
-      if (!(await confirmCard('Delete this chart?', `"${chart.name}" will be removed from the app. The file you loaded it from isn't touched.`, 'Delete', { danger: true }))) return;
-      await charts.remove(chart);
-      backFrom(here);
-    }, { danger: true, id: 'chart-delete' }));
+    if (chart.where === 'remote') add(body, heading('OFFLINE'), row('Save an area of it offline', 'For use with no signal', openOffline));
   });
 }
 
 // ---------------------------------------------------------------- maps
 
 function openMaps() {
-  openSheet('Maps', (body) => {
+  openSheet('Online map layers', (body) => {
     const s = basemap.state;
     const link = el('input', { type: 'url', id: 'custom-url', placeholder: 'https://…/{z}/{x}/{y}.png', value: s.customUrl, autocomplete: 'off', autocapitalize: 'off', spellcheck: false });
     const credit = el('input', { type: 'text', id: 'custom-credit', placeholder: "The map provider's credit line", value: s.customCredit, maxLength: 160 });
@@ -258,7 +469,7 @@ function openMaps() {
         }
         await basemap.setBasemap(b.id);
         refreshSheet();
-      }, { value: s.basemap === b.id ? '✓' : null, id: `basemap-${b.id}` })),
+      }, { chosen: s.basemap === b.id, id: `basemap-${b.id}` })),
       heading('YOUR OWN TILE LINK'),
       field('Tile link', link),
       field('Credit shown on the map', credit),
@@ -308,7 +519,7 @@ function savable() {
 }
 
 function openOffline() {
-  openSheet('Save for offline', (body) => {
+  openSheet('Offline maps', (body) => {
     const choices = savable();
     const view = map.getBounds();
     const bounds = [view.getWest(), view.getSouth(), view.getEast(), view.getNorth()];
@@ -324,7 +535,7 @@ function openOffline() {
     if (!choices.length) {
       add(body, 
         note('Charts and surveys you load from the Files app already work with no signal.'),
-        note('To save more, turn on the satellite picture (Maps) or add a chart from a web address (Charts), move the chart to the area you want, then come back here.'),
+        note('To save more, turn on the satellite picture in Layers, or add a chart from a web address (Settings, Depths), move the chart to the area you want, then come back here.'),
         savedRows);
       return;
     }
@@ -410,7 +621,7 @@ function openStorage() {
     const local = charts.list().filter((c) => c.where === 'local');
     add(body, 
       usage, kept, el('div', { class: 'actions' }, ask),
-      heading('CHARTS ON THIS PHONE'),
+      heading('LAYERS ON THIS PHONE'),
       local.length ? local.map((c) => row(c.name, describe(c), async () => {
         if (!(await confirmCard('Delete this chart?', `"${c.name}" will be removed from the app, freeing ${files.formatBytes(c.size)}. The file you loaded it from isn't touched.`, 'Delete', { danger: true }))) return;
         await charts.remove(c);

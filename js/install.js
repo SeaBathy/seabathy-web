@@ -5,7 +5,7 @@ import { setting } from './db.js';
 import * as updates from './updates.js';
 import { add, button, card, closeSheet, confirmCard, el, openSheet, refreshSheet, topSheet, heading, note, row, toast, toggle } from './ui.js';
 
-export const VERSION = '0.3.4';
+export const VERSION = '0.3.5';
 /** Raise when the wording changes in a way people should agree to again. */
 const TERMS_VERSION = 1;
 const TERMS_URL = 'https://seabathy.com/terms';
@@ -173,7 +173,7 @@ const INSTALL_STEPS = [
 export function openAbout() {
   const auto = toggle('Update automatically', 'A newer version is used the next time you open the app. Off: a bar at the top waits for your tap.', false,
     (on) => updates.setMode(on ? 'auto' : 'ask'), 'updates-auto-switch');
-  openSheet('About and safety', (body) => {
+  openSheet('About', (body) => {
     const ready = updates.readyVersion();
     add(body, 
       note(`SeaBathy web app, version ${VERSION}. Free and open source, with no account, ads or tracking.`),
@@ -186,9 +186,9 @@ export function openAbout() {
       note(isStandalone() ? 'This copy is running from the Home Screen.' : 'This copy is running in the browser. Charts and waypoints kept here do not move to the installed app: install first, then load your charts.'),
       canInstall() ? row('Install SeaBathy', 'One tap where the browser allows it, and the steps for every other browser', openInstall, { id: 'about-install' }) : null,
       heading('GETTING DEPTHS'),
-      note('Menu, Get seabed depths: draw a box on the chart over the water you want, and the app downloads free depths for it and keeps them on the phone. They work with no signal, and the 3D button flies you over them.'),
+      note('Layers, Get seabed depths: draw a box on the chart over the water you want, and the app downloads free depths for it and keeps them on the phone. They work with no signal, and the 3D button flies you over them.'),
       note('In Australian waters you can choose High detail: the IMAS composite, 10 m on the shelf, sent by IMAS\'s own server. A box up to about 30 km square comes at the full 10 m; a bigger one comes coarser, so draw a small box for the spot that matters. Anywhere else, and as the other choice in Australia, the depths are the worldwide GMRT model.'),
-      note('Your own files load too: GeoTIFF depth surveys (.tif), and PMTiles charts (.pmtiles) with depth shapes, contour lines or chart pictures. Copy them to the Files app, then Charts, Load a file from this phone.'),
+      note('Your own files load too: GeoTIFF depth surveys (.tif), and PMTiles charts (.pmtiles) with depth shapes, contour lines or chart pictures. Copy them to the Files app, then Settings, Depths, Load GeoTIFF or PMTiles file.'),
       note('An MBTiles file must be converted first, on a computer: pmtiles convert chart.mbtiles chart.pmtiles (the free "pmtiles" tool from Protomaps).'),
       heading('PRIVACY'),
       note('Your position, waypoints and charts stay on this phone. The app talks only to: the map servers of the maps you turn on; the depth servers when you download depths (GMRT, or IMAS for high detail); its own web address, to look for a newer version of itself; and any web address you add yourself. They see the usual things a web request shows (your internet address and the area of map asked for). A survey in an unusual map projection makes the app ask epsg.io once for that projection\'s definition.'),
@@ -198,6 +198,7 @@ export function openAbout() {
       note('SeaBathy shows both resampled to the screen and coloured, and a bigger area comes as a coarser grid. Their makers do not endorse SeaBathy.'),
       note('Marine park zones, from each authority\'s own zoning (all CC BY): Australian Marine Parks, DCCEEW; Great Barrier Reef Marine Park Authority; Queensland Government; NSW Department of Primary Industries (Fisheries); SA Department for Environment and Water; WA Department of Primary Industries and Regional Development; and CAPAD 2024, DCCEEW. A guide only: the official zoning map and rules for each park are the law.'),
       note('Reef and island names: Composite Gazetteer of Australia, Geoscience Australia and the states and territories (CC BY 4.0); Great Barrier Reef Features, Great Barrier Reef Marine Park Authority (CC BY 4.0). Boat ramps: © OpenStreetMap contributors (ODbL).'),
+      note('Buoys, beacons, pipelines and cables (a beta layer, not for navigation): Transport for NSW, WA Department of Transport, Victorian and Queensland Governments, AMSA, NOPTA, Geoscience Australia, ACMA, and © OpenStreetMap contributors.'),
       note('Basemaps: OpenFreeMap © OpenMapTiles, data © OpenStreetMap contributors (ODbL). OpenTopoMap: map data © OpenStreetMap contributors, SRTM; map style © OpenTopoMap (CC-BY-SA). USGS The National Map.'),
       note('Satellite: EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024), CC BY-NC-SA 4.0, for non-commercial use. Daily true colour: NASA Global Imagery Browse Services (GIBS), part of NASA\'s ESDIS.'),
       note('Built with MapLibre GL JS and PMTiles (BSD 3-Clause), three.js, geotiff.js and proj4js (MIT), and Open Sans (SIL Open Font Licence). SeaBathy itself is under the GNU GPL version 3.'),

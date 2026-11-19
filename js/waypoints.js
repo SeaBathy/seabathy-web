@@ -3,8 +3,9 @@
 
 import { Marker } from '../vendor/maplibre-gl.js';
 import * as db from './db.js';
+import * as units from './units.js';
 import { buildGpx, parseGpx } from './gpx.js';
-import { add, el, svg, toast, openSheet, refreshSheet, topSheet, backFrom, closeSheet, row, button, field, heading, note, toggle, confirmCard } from './ui.js';
+import { add, el, svg, toast, openSheet, topSheet, backFrom, closeSheet, closeDrawer, button, mini, confirmCard, saveFile } from './ui.js';
 
 export const COLOURS = ['#EF4444', '#F97316', '#EAB308', '#22C55E', '#3B82F6', '#A855F7'];
 
@@ -54,6 +55,8 @@ function draw(waypoint) {
     showNames ? el('span', { class: 'wpt-name', text: waypoint.name }) : null);
   node.addEventListener('click', (event) => {
     event.stopPropagation();
+    // A tool that is on may take the tap (a route being planned adds the waypoint as its next point).
+    if (tapHook?.(waypoint)) return;
     edit(waypoint);
   });
   markers.set(waypoint.id, new Marker({ element: node, anchor: 'top', offset: [0, -13] }).setLngLat([waypoint.lng, waypoint.lat]).addTo(map));
@@ -74,11 +77,31 @@ async function remove(waypoint) {
   changed();
 }
 
-/** A new waypoint at a place, opened for editing straight away. */
-export async function addAt(lng, lat) {
-  const waypoint = { id: newId(), name: nextName(), lat, lng, color: COLOURS[0], desc: '', icon: 'marker', created: Date.now() };
+export const showsNames = () => showNames;
+
+/** Names beside the waypoints on the chart, or the dots alone. */
+export async function setShowNames(on) {
+  showNames = on;
+  await db.setting.set('waypointNames', on);
+  for (const w of waypoints) draw(w);
+}
+
+let tapHook = null;
+/** Has [fn] asked first whenever a waypoint is tapped; when it answers true the tap is its own. */
+export function setTapHook(fn) {
+  tapHook = fn;
+}
+
+let routeImporter = null;
+/** Who keeps the routes found in a GPX file: [fn] is given them and answers how many it added. */
+export function setRouteImporter(fn) {
+  routeImporter = fn;
+}
+
+/** A new waypoint saved with a name, symbol and colour of its own (the man overboard mark). */
+export async function addMarked(lng, lat, { name, icon = 'marker', color = COLOURS[0], desc = '' }) {
+  const waypoint = { id: newId(), name, lat, lng, color, desc, icon, created: Date.now() };
   await save(waypoint);
-  edit(waypoint, { fresh: true });
   return waypoint;
 }
 
@@ -89,92 +112,152 @@ export async function addQuiet(lng, lat, desc = '') {
   return waypoint;
 }
 
-const formatPosition = (lat, lng) => `${Math.abs(lat).toFixed(5)}° ${lat < 0 ? 'S' : 'N'}, ${Math.abs(lng).toFixed(5)}° ${lng < 0 ? 'W' : 'E'}`;
+// ---------------------------------------------------------------- the cards
 
-/** The edit panel for one waypoint. */
-export function edit(waypoint, { fresh = false } = {}) {
-  const draft = { ...waypoint };
-  openSheet(fresh ? 'New waypoint' : 'Waypoint', (body) => {
-    const here = topSheet();
-    const name = el('input', { type: 'text', id: 'wpt-name', value: draft.name, maxLength: 60, autocomplete: 'off', oninput: () => { draft.name = name.value; } });
-    const desc = el('textarea', { id: 'wpt-desc', rows: 2, maxLength: 500, value: draft.desc || '', oninput: () => { draft.desc = desc.value; } });
-    const lat = el('input', { type: 'text', id: 'wpt-lat', inputMode: 'decimal', value: draft.lat.toFixed(6), oninput: () => { draft.lat = Number(lat.value); } });
-    const lng = el('input', { type: 'text', id: 'wpt-lng', inputMode: 'decimal', value: draft.lng.toFixed(6), oninput: () => { draft.lng = Number(lng.value); } });
-    const swatches = el('div', { class: 'swatches' }, COLOURS.map((colour) => el('button', {
-      type: 'button', class: `swatch${colour === draft.color ? ' on' : ''}`, style: `background:${colour}`, 'aria-label': `Colour ${colour}`,
-      onclick: (event) => {
-        draft.color = colour;
-        for (const s of swatches.children) s.classList.toggle('on', s === event.currentTarget);
+/** The row of colours and the row of symbols, changing [draft] as they are tapped. */
+function looks(draft) {
+  const colours = el('div', { class: 'colour-choices' }, COLOURS.map((colour) => el('button', {
+    type: 'button', class: `colour-choice${colour === draft.color ? ' on' : ''}`, style: `background:${colour}`, 'aria-label': `Colour ${colour}`,
+    onclick: (event) => {
+      draft.color = colour;
+      for (const s of colours.children) s.classList.toggle('on', s === event.currentTarget);
+    }
+  })));
+  const icons = el('div', { class: 'icon-choices' }, ICONS.map((icon) => {
+    const choice = el('button', {
+      type: 'button', class: `icon-choice${icon.id === draft.icon ? ' on' : ''}`, 'aria-label': icon.label, title: icon.label,
+      onclick: () => {
+        draft.icon = icon.id;
+        for (const c of icons.children) c.classList.toggle('on', c === choice);
       }
-    })));
-    const icons = el('div', { class: 'icon-choices' }, ICONS.map((icon) => {
-      const choice = el('button', {
-        type: 'button', class: `icon-choice${icon.id === draft.icon ? ' on' : ''}`, 'aria-label': icon.label, title: icon.label,
+    }, svg(iconSvg(icon.id)));
+    return choice;
+  }));
+  return [colours, icons];
+}
+
+/**
+ * The card for a new waypoint at a place, at the foot of the screen as in the Android app: a
+ * name, a note, a colour and a symbol. Nothing is saved until Save waypoint is tapped.
+ */
+export function addAt(lng, lat) {
+  const draft = { id: newId(), name: '', lat, lng, color: COLOURS[0], desc: '', icon: 'marker', created: Date.now() };
+  openSheet('New waypoint', (body) => {
+    const here = topSheet();
+    const name = el('input', { type: 'text', id: 'wpt-name', class: 'plain-input', placeholder: 'Waypoint name', value: draft.name, maxLength: 60, autocomplete: 'off', oninput: () => { draft.name = name.value; } });
+    const desc = el('input', { type: 'text', id: 'wpt-desc', class: 'plain-input', placeholder: 'Description / notes', value: draft.desc, maxLength: 500, autocomplete: 'off', oninput: () => { draft.desc = desc.value; } });
+    add(body,
+      name, desc,
+      looks(draft),
+      el('div', { class: 'readout', id: 'wpt-position', text: units.positionText(lat, lng) }),
+      el('div', { class: 'actions' },
+        button('Cancel', () => backFrom(here), { id: 'wpt-cancel' }),
+        button('Save waypoint', async () => {
+          await save({ ...draft, name: draft.name.trim() || nextName() });
+          backFrom(here);
+        }, { go: true, id: 'wpt-save' })));
+  }, { dock: true });
+}
+
+/** The card for a waypoint already on the chart: change it, jump to it, or delete it. */
+export function edit(waypoint) {
+  const draft = { ...waypoint };
+  let typing = false;
+  openSheet('Waypoint', (body) => {
+    const here = topSheet();
+    const name = el('input', { type: 'text', id: 'wpt-name', class: 'plain-input', placeholder: 'Waypoint name', value: draft.name, maxLength: 60, autocomplete: 'off', oninput: () => { draft.name = name.value; } });
+    const desc = el('input', { type: 'text', id: 'wpt-desc', class: 'plain-input', placeholder: 'Description / notes', value: draft.desc || '', maxLength: 500, autocomplete: 'off', oninput: () => { draft.desc = desc.value; } });
+    const typed = el('input', { type: 'text', id: 'wpt-position-typed', class: 'plain-input', value: units.positionText(draft.lat, draft.lng), autocomplete: 'off', autocapitalize: 'characters', spellcheck: false });
+    const position = typing
+      ? typed
+      : el('button', {
+        class: 'readout', type: 'button', id: 'wpt-position', 'aria-label': 'Edit the coordinates',
         onclick: () => {
-          draft.icon = icon.id;
-          for (const c of icons.children) c.classList.toggle('on', c === choice);
+          typing = true;
+          position.replaceWith(typed);
+          typed.focus();
         }
-      }, svg(iconSvg(icon.id)));
-      return choice;
-    }));
-    add(body, 
-      field('Name', name),
-      field('Note', desc),
-      el('div', { class: 'pair' }, field('Latitude', lat), field('Longitude', lng)),
-      note('Decimal degrees: south and west are negative.'),
-      heading('COLOUR'), swatches,
-      heading('SYMBOL'), icons,
+      }, el('span', { class: 'readout-text', text: units.positionText(draft.lat, draft.lng) }), el('span', { class: 'readout-edit', text: 'EDIT COORDINATES' }));
+    add(body,
+      name,
+      position,
+      desc,
+      looks(draft),
       el('div', { class: 'actions' },
         button('Delete', async () => {
-          if (!fresh && !(await confirmCard('Delete this waypoint?', `"${waypoint.name}" will be removed from this phone.`, 'Delete', { danger: true }))) return;
+          if (!(await confirmCard('Delete this waypoint?', `"${waypoint.name}" will be removed from this phone.`, 'Delete', { danger: true }))) return;
           await remove(waypoint);
           backFrom(here);
         }, { danger: true, id: 'wpt-delete' }),
-        button('Go to', () => {
+        button('Jump', () => {
           closeSheet();
           map.easeTo({ center: [waypoint.lng, waypoint.lat], zoom: Math.max(map.getZoom(), 13) });
-        }),
+        }, { id: 'wpt-jump' }),
         button('Save', async () => {
-          if (!Number.isFinite(draft.lat) || !Number.isFinite(draft.lng) || Math.abs(draft.lat) > 90 || Math.abs(draft.lng) > 180) {
-            toast('That position isn\'t valid: latitude is -90 to 90, longitude -180 to 180.');
-            return;
+          if (typing) {
+            const at = units.parsePosition(typed.value);
+            if (!at) {
+              toast("That position doesn't read as a latitude and a longitude.");
+              return;
+            }
+            Object.assign(draft, at);
           }
           Object.assign(waypoint, draft, { name: draft.name.trim() || nextName() });
           await save(waypoint);
           backFrom(here);
         }, { primary: true, id: 'wpt-save' })));
-  });
+  }, { own: true });
 }
 
-/** The saved waypoints as a GPX file, handed to the phone's share sheet or saved as a download. */
-async function exportGpx() {
-  if (!waypoints.length) {
+// ---------------------------------------------------------------- in the Layers panel
+
+let query = '';
+
+/** The waypoints as the Layers panel lists them: a search box, then each with GO and EDIT. */
+export function drawerSection() {
+  const results = el('div', { id: 'wpt-list' });
+  const fill = () => {
+    const q = query.trim().toLowerCase();
+    const shown = waypoints
+      .filter((w) => !q || w.name.toLowerCase().includes(q) || (w.desc || '').toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    results.replaceChildren(...(shown.length
+      ? shown.map((w) => el('div', { class: 'wrow', 'data-id': w.id },
+        el('span', { class: 'wrow-dot', style: `--c:${w.color}` }),
+        el('span', { class: 'wrow-text' },
+          el('span', { class: 'wrow-name', text: w.name }),
+          el('span', { class: 'wrow-pos', text: units.positionText(w.lat, w.lng) })),
+        mini('Go', () => {
+          closeDrawer();
+          map.jumpTo({ center: [w.lng, w.lat], zoom: Math.max(map.getZoom(), 12) });
+        }, { accent: true, cls: 'wrow-go', title: `Go to ${w.name}` }),
+        mini('Edit', () => edit(w), { cls: 'wrow-edit', title: `Edit ${w.name}` })))
+      : [el('div', { class: 'drawer-empty', text: waypoints.length ? 'No waypoint matches that' : 'No waypoints yet' })]));
+  };
+  const search = el('input', { type: 'search', id: 'wpt-search', placeholder: 'Search waypoints', value: query, autocomplete: 'off', oninput: () => { query = search.value; fill(); } });
+  fill();
+  return [search, results];
+}
+
+// ---------------------------------------------------------------- GPX in and out
+
+/** The saved waypoints, and the routes given, as a GPX file: to the phone's share sheet, or saved as a download. */
+export async function exportGpx(routes = []) {
+  if (!waypoints.length && !routes.length) {
     toast('There are no waypoints to export yet.');
     return;
   }
   const stamp = new Date().toISOString().slice(0, 10);
-  const file = new File([buildGpx(waypoints)], `seabathy-waypoints-${stamp}.gpx`, { type: 'application/gpx+xml' });
-  try {
-    if (navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], title: 'SeaBathy waypoints' });
-      return;
-    }
-  } catch (error) {
-    if (error?.name === 'AbortError') return;
-  }
-  const link = el('a', { href: URL.createObjectURL(file), download: file.name });
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(link.href), 60000);
-  toast(`Saved ${waypoints.length} waypoint${waypoints.length === 1 ? '' : 's'} as ${file.name}`);
+  const file = new File([buildGpx(waypoints, routes)], `seabathy-waypoints-${stamp}.gpx`, { type: 'application/gpx+xml' });
+  const also = routes.length ? ` and ${routes.length} route${routes.length === 1 ? '' : 's'}` : '';
+  await saveFile(file, { title: 'SeaBathy waypoints', done: `Saved ${waypoints.length} waypoint${waypoints.length === 1 ? '' : 's'}${also} as ${file.name}` });
 }
 
-/** Adds the waypoints in a GPX file, leaving out any already here (same name, same spot). */
-export async function importGpxText(text) {
-  const found = parseGpx(text);
+/** Adds waypoints read from a file, leaving out any already here (same name, same spot). */
+export async function addAll(found) {
   let added = 0;
-  for (const w of found.waypoints) {
+  for (const w of found) {
+    if (!Number.isFinite(w.lat) || !Number.isFinite(w.lng)) continue;
     const same = waypoints.some((o) => o.name === (w.name || o.name) && Math.abs(o.lat - w.lat) < 1e-6 && Math.abs(o.lng - w.lng) < 1e-6);
     if (same) continue;
     await save({
@@ -185,54 +268,37 @@ export async function importGpxText(text) {
     });
     added++;
   }
-  return { added, skipped: found.waypoints.length - added, routes: found.routes, tracks: found.tracks };
+  return { added, skipped: found.length - added };
 }
 
-/** The waypoint list: search, tap one to open it, and the GPX backup. */
-export function openList() {
-  let query = '';
-  openSheet('Waypoints', (body) => {
-    const results = el('div', { id: 'wpt-list' });
-    const fill = () => {
-      const q = query.trim().toLowerCase();
-      const shown = waypoints
-        .filter((w) => !q || w.name.toLowerCase().includes(q) || (w.desc || '').toLowerCase().includes(q))
-        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-      results.replaceChildren(...(shown.length
-        ? shown.map((w) => row(w.name, formatPosition(w.lat, w.lng), () => edit(w)))
-        : [note(waypoints.length ? 'No waypoint matches that.' : 'No waypoints yet. Tap + on the chart to mark the spot under the crosshair, or hold a finger on the chart.')]));
-    };
-    const search = el('input', { type: 'search', placeholder: 'Search', value: query, oninput: () => { query = search.value; fill(); } });
-    const picker = el('input', {
-      type: 'file', id: 'gpx-file', accept: '.gpx,application/gpx+xml,application/xml,text/xml', hidden: true,
-      onchange: async () => {
-        const file = picker.files[0];
-        picker.value = '';
-        if (!file) return;
-        try {
-          const done = await importGpxText(await file.text());
-          const extra = done.routes + done.tracks ? ` Routes and tracks in the file were left out.` : '';
-          toast(`Added ${done.added} waypoint${done.added === 1 ? '' : 's'}${done.skipped ? `, ${done.skipped} already here` : ''}.${extra}`);
-          refreshSheet();
-        } catch (error) {
-          toast(error.message || "Couldn't read that file.");
-        }
+/** Adds the waypoints and routes in a GPX file, leaving out any already here. */
+export async function importGpxText(text) {
+  const found = parseGpx(text);
+  const done = await addAll(found.waypoints);
+  const routes = routeImporter ? await routeImporter(found.routes) : 0;
+  return { ...done, routes, tracks: found.tracks };
+}
+
+/** The hidden file box that reads a GPX file; [after] runs once its marks are in. */
+export function gpxPicker(after = () => {}) {
+  const picker = el('input', {
+    type: 'file', id: 'gpx-file', accept: '.gpx,application/gpx+xml,application/xml,text/xml', hidden: true,
+    onchange: async () => {
+      const file = picker.files[0];
+      picker.value = '';
+      if (!file) return;
+      try {
+        const done = await importGpxText(await file.text());
+        const routes = done.routes ? ` and ${done.routes} route${done.routes === 1 ? '' : 's'}` : '';
+        const extra = done.tracks ? ' Tracks in the file were left out.' : '';
+        toast(`Added ${done.added} waypoint${done.added === 1 ? '' : 's'}${routes}${done.skipped ? `, ${done.skipped} already here` : ''}.${extra}`);
+        after();
+      } catch (error) {
+        toast(error.message || "Couldn't read that file.");
       }
-    });
-    fill();
-    add(body, 
-      waypoints.length > 6 ? search : null,
-      results,
-      heading('BACKUP'),
-      row('Export waypoints', 'Save or share them as a GPX file', exportGpx, { id: 'gpx-export' }),
-      row('Import GPX', 'From a backup, a plotter or another app', () => picker.click(), { id: 'gpx-import' }),
-      picker,
-      toggle('Show names on the chart', null, showNames, async (on) => {
-        showNames = on;
-        await db.setting.set('waypointNames', on);
-        for (const w of waypoints) draw(w);
-      }));
+    }
   });
+  return picker;
 }
 
 export async function start(theMap) {

@@ -478,6 +478,22 @@ export function flyTo(chart) {
   map.fitBounds([[west, south], [east, north]], { padding: 40, maxZoom: Math.min(chart.maxZoom, 15), duration: 600 });
 }
 
+/**
+ * The height at a place from the depth surveys shown (negative under water, positive on land),
+ * or null where none of them covers it. Used along a route's legs, on screen or off it.
+ */
+export async function surveyDepthAt(lng, lat) {
+  for (let i = charts.length - 1; i >= 0; i--) {
+    const chart = charts[i];
+    if (chart.visible === false || chart.kind !== 'geotiff') continue;
+    const [west, south, east, north] = chart.bounds;
+    if (lng < west || lng > east || lat < south || lat > north) continue;
+    const height = await survey.depthAt(chart, lng, lat).catch(() => null);
+    if (height !== null && Number.isFinite(height)) return height;
+  }
+  return null;
+}
+
 /** The credits of the charts now shown. */
 export const credits = () => charts.filter((c) => c.visible !== false && c.attribution).map((c) => c.attribution);
 

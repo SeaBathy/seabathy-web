@@ -1,7 +1,7 @@
 # SeaBathy web app
 
 ![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
-![Version 0.3.4](https://img.shields.io/badge/version-0.3.4-informational)
+![Version 0.3.5](https://img.shields.io/badge/version-0.3.5-informational)
 ![Works offline](https://img.shields.io/badge/works-offline-success)
 ![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
 
@@ -20,14 +20,16 @@ Screen, so it needs no App Store. It also works on Android and on a computer.
 > date. Use official charts and proper navigation equipment. See the
 > [terms of use](https://seabathy.com/terms).
 
-This is the web version of [SeaBathy](https://seabathy.com). It has the core of the Android
-app: depth download, the 3D seabed, depth colours, satellite, waypoints and GPS. The Android
-and Windows apps do more (tides, sea conditions, routes, tracks, anchor alarm).
+This is the web version of [SeaBathy](https://seabathy.com). It is laid out as the Android app
+is, and has its core: depth download, the 3D seabed, depth colours, satellite, waypoints,
+routes, measuring and GPS. The Android and Windows apps do more (tides, sea conditions, tracks,
+anchor alarm).
 
 ## Contents
 
 - [Install](#install)
 - [Get depths](#get-depths)
+- [Finding your way round](#finding-your-way-round)
 - [The seabed in 3D](#the-seabed-in-3d)
 - [Marine parks, reef names and boat ramps](#marine-parks-reef-names-and-boat-ramps)
 - [With no signal](#with-no-signal)
@@ -43,7 +45,7 @@ and Windows apps do more (tides, sea conditions, routes, tracks, anchor alarm).
 
 ## Install
 
-<img src="screenshots/install.jpg" alt="Add SeaBathy to your Home Screen" width="300"> <img src="screenshots/menu.jpg" alt="The menu" width="300">
+<img src="screenshots/install.jpg" alt="Add SeaBathy to your Home Screen" width="300"> <img src="screenshots/menu.jpg" alt="The Layers panel" width="300">
 
 **iPhone or iPad** (iOS 15.2 or newer):
 
@@ -58,16 +60,16 @@ and Windows apps do more (tides, sea conditions, routes, tracks, anchor alarm).
 Install first, then get your depths. Safari and the installed app keep their data apart, so
 anything you add in Safari does not appear in the installed app.
 
-**Any other phone or computer:** open [app.seabathy.com](https://app.seabathy.com), then Menu
-(☰) → **Install SeaBathy**. Where the browser can install it, one tap does it; otherwise the
+**Any other phone or computer:** open [app.seabathy.com](https://app.seabathy.com), then ☰ →
+**Settings** → **Install SeaBathy**. Where the browser can install it, one tap does it; otherwise the
 panel gives the steps for that browser. Installed, the app has its own icon and window, with no
 address bar.
 
 | Browser | How |
 |---|---|
-| Chrome, Brave, Edge, Samsung Internet on Android | Menu → **Install SeaBathy** → **Install now**, or the browser's own **Add to Home screen** |
+| Chrome, Brave, Edge, Samsung Internet on Android | ☰ → Settings → **Install SeaBathy** → **Install now**, or the browser's own **Add to Home screen** |
 | Firefox on Android | The browser's ⋮ menu → **Add app to Home screen** |
-| Chrome, Brave, Edge on a computer | Menu → **Install SeaBathy** → **Install now**, or the install button at the end of the address bar |
+| Chrome, Brave, Edge on a computer | ☰ → Settings → **Install SeaBathy** → **Install now**, or the install button at the end of the address bar |
 | Safari on a Mac | **File** → **Add to Dock** |
 | Firefox on a computer | Recent versions on Windows have an "add to taskbar" button in the address bar. Otherwise it can't install web apps: press F11 for full screen, or install from Chrome, Edge or Brave |
 
@@ -76,7 +78,7 @@ address bar.
 <img src="screenshots/get-depths.jpg" alt="Get seabed depths" width="300"> <img src="screenshots/draw-area.jpg" alt="A box drawn on the chart over the water wanted" width="300">
 
 1. Move the chart to the water you want.
-2. Menu (☰) → **Get seabed depths**, and choose which depths.
+2. ☰ (Layers) → **Get seabed depths**, and choose which depths.
 3. **Draw a box** over the area: drag a finger across the chart. Drag the box to move it, or a
    corner to resize it; two fingers still move and zoom the chart. The bar shows the box's size
    and what the download will be.
@@ -98,6 +100,23 @@ There are two kinds:
 The high-detail depths rely on a public IMAS server that this project does not run. If IMAS
 changes it, **High detail** stops working until the app is updated; depths already on the
 phone and the worldwide depths are not affected.
+
+## Finding your way round
+
+<img src="screenshots/settings.jpg" alt="Settings" width="300"> <img src="screenshots/route.jpg" alt="A route with its legs" width="300">
+
+The screen is laid out as the Android app's is.
+
+- **The top bar:** ☰ opens the Layers panel; the box beside it is the position under the
+  crosshair (tap it to go to coordinates); then GPS, the waypoint tool, the route tool, the
+  measure tool, and the red **MOB** button.
+- **The Layers panel (☰):** Settings; the map layers, each with a switch, a slider for how
+  see-through it is, and **Rename**, **Remove**, **Colours** and **3D view**; **Get seabed
+  depths**; your waypoints with **Go** and **Edit**; and the basemap at the foot.
+- **Settings:** Map display, Depths, Online and offline maps, Boat and navigation, Australia,
+  Waypoints and backup, and About. Each opens as a card; **Close** goes back one.
+- **A tool** is on until its button is tapped again. While one is on, a line at the foot of the
+  chart says what a tap does.
 
 ## The seabed in 3D
 
@@ -123,7 +142,7 @@ Where the area takes in land, 3D opens on the water alone; the Depth tab brings 
 
 <img src="screenshots/places.jpg" alt="Marine park zones and reef and island names in the Whitsundays" width="300">
 
-Menu → **Marine parks and places**, for Australian waters. Each is off until you switch it on:
+☰ → Settings → **Australia**, for Australian waters. Each is off until you switch it on:
 
 - **Marine park zones:** no-take zones in green, limited fishing in yellow, general use in
   blue; all zones, or the no-take ones alone. Tap a zone for its park, its official zone name
@@ -132,6 +151,8 @@ Menu → **Marine parks and places**, for Australian waters. Each is off until y
 - **Reef and island names:** about 9,600 reefs, islands, shoals, banks and rocks, with the
   numbers of unnamed reefs when you zoom in.
 - **Boat ramps:** about 2,700, from OpenStreetMap.
+- **Buoys, beacons, pipelines and cables (beta):** off again at every start, with a warning each
+  time it is switched on. Positions may be old or wrong: not for navigation.
 
 The zones are a guide only. They come from government data that can lag behind changes: the
 official zoning map and rules for each park are the law. Each file is fetched from the app's
@@ -144,7 +165,7 @@ Once you have what you want, the app needs no internet:
 
 - **The app itself** is kept on the phone after its first start.
 - **Depths** you downloaded, and files you loaded, are kept on the phone, on the chart and in 3D.
-- **The satellite picture** works for the areas you saved with **Save for offline**.
+- **The satellite picture** works for the areas you saved with **Offline maps**.
 - **GPS** comes from the phone, not the internet, so the boat shows on the chart and in 3D.
 - **Waypoints** and GPX files are kept on the phone.
 - **Marine park zones, names and ramps** work once each has been switched on with a connection.
@@ -165,18 +186,30 @@ signal the chart is your depths and saved satellite on a plain background.
 - **Basemaps:** dark, street map, OpenStreetMap, OpenTopoMap, USGS imagery, your own tile link
   with its credit, or none.
 - **Satellite picture** over the chart with an opacity slider, and savable for offline use.
-- **Waypoints:** add at the crosshair, by holding a finger on the chart, or by tapping the
-  seabed in 3D; name, note, colour and symbol; saved on the phone.
-- **GPX in and out,** to back up waypoints and to move them between SeaBathy, a plotter and
-  other apps.
+- **Waypoints:** the waypoint tool drops one at the crosshair; so does holding a finger on the
+  chart, or tapping the seabed in 3D. Name, note, colour and symbol; saved on the phone, and
+  listed in the Layers panel with a search box.
+- **Routes:** points put down at the crosshair, with each leg's bearing, distance, time and the
+  least depth along it from your depth layers; saved by name, reversed, and out as GPX. For
+  planning: the app does not steer along a route or sound alarms.
+- **Measuring:** tap two or more points for the distance (nautical miles and kilometres) and
+  the bearing.
+- **Man overboard:** one red button marks where the boat is and shows the distance and bearing
+  back to it.
+- **Go to coordinates:** tap the position at the top and type one in, in degrees and minutes,
+  degrees, minutes and seconds, or decimal degrees.
+- **GPX in and out,** to move waypoints and routes between SeaBathy, a plotter and other apps.
+- **Backup:** waypoints, routes and settings in one file, and back from it.
 - **GPS:** the boat on the chart and in 3D, with speed, course and accuracy, and a follow mode.
 - **Your own files:** GeoTIFF depth surveys and PMTiles charts.
 - **Marine park zones, reef and island names and boat ramps** round Australia, each with a
   switch, and a warning on the way into a no-take zone.
-- **Layers you can switch off:** a hidden depth layer is taken off the chart and its file is
-  closed, so it uses no memory until you show it again.
-- **Units:** depths in metres, feet or fathoms, and speed in knots, km/h or mph (Menu →
-  Settings).
+- **Layers you can switch off, fade and rename,** each with its own switch and slider in the
+  Layers panel. A hidden depth layer is taken off the chart and its file is closed, so it uses
+  no memory until you show it again.
+- **Units:** depths in metres, feet or fathoms, and speed in knots, km/h or mph (Settings →
+  Boat and navigation).
+- **Night red filter,** to keep your night vision (Settings → Map display).
 - **Storage:** how much the app is using, and a delete button for every layer and saved area.
 - **Updates** by itself or after a tap, as you choose.
 
@@ -197,7 +230,7 @@ storage, waypoints, settings and saved map tiles in its database. An iPhone lets
 web app use up to about 60% of the phone's storage.
 
 - The app asks the phone to keep its data. iOS decides, and is more likely to agree for an app
-  on the Home Screen. **Storage** in the menu shows the answer.
+  on the Home Screen. **Storage** (Settings → Online and offline maps) shows the answer.
 - Without that promise, iOS may clear the data if the phone runs very short of space.
 - Removing the app from the Home Screen deletes its data.
 
@@ -213,15 +246,15 @@ downloads it in the background. On the first start it asks which you want:
 - **Ask me first:** a bar at the top says the version is ready, and nothing changes until you
   tap it.
 
-Change it at any time under Menu → **About and safety** → **Updates**, where **Check for an
+Change it at any time under Settings → **About** → **Updates**, where **Check for an
 update** also looks straight away. Depths, charts and waypoints stay through every update.
 Looking for an update sends nothing about you or the phone.
 
 ## Your own files
 
-Copy the file to the phone's **Files** app, then menu → **Charts** → **Load a file from this
-phone**. It is copied into the app, so it needs free space of about twice its size while it
-loads.
+Copy the file to the phone's **Files** app, then ☰ → Settings → **Depths** → **Load GeoTIFF or
+PMTiles file**. It is copied into the app, so it needs free space of about twice its size while
+it loads.
 
 | File | What it is |
 |---|---|
@@ -338,8 +371,8 @@ number.
   [proj4js](https://github.com/proj4js/proj4js) (MIT). Their licences, and those of everything
   they are built from, are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) and
   [`vendor/licenses`](vendor/licenses). Depth labels use Open Sans
-  ([licence](glyphs/LICENSE.txt)). All of these can be read inside the app: Menu → About and
-  safety → **Licences**.
+  ([licence](glyphs/LICENSE.txt)). All of these can be read inside the app: Settings → About →
+  **Licences**.
 - **Maps and data** are not part of the app. Each comes from its own server, and its credit is
   shown on the chart while it is shown; a tap on the credit line shows every credit in full.
 
