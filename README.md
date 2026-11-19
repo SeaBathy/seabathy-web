@@ -57,9 +57,18 @@ and Windows apps do more (tides, sea conditions, routes, tracks, anchor alarm).
 Install first, then get your depths. Safari and the installed app keep their data apart, so
 anything you add in Safari does not appear in the installed app.
 
-**Android:** open [app.seabathy.com](https://app.seabathy.com) in Chrome and choose **Install
-app**.
-**Computer:** open it in any current browser; Chrome and Edge can install it too.
+**Any other phone or computer:** open [app.seabathy.com](https://app.seabathy.com), then Menu
+(☰) → **Install SeaBathy**. Where the browser can install it, one tap does it; otherwise the
+panel gives the steps for that browser. Installed, the app has its own icon and window, with no
+address bar.
+
+| Browser | How |
+|---|---|
+| Chrome, Brave, Edge, Samsung Internet on Android | Menu → **Install SeaBathy** → **Install now**, or the browser's own **Add to Home screen** |
+| Firefox on Android | The browser's ⋮ menu → **Add app to Home screen** |
+| Chrome, Brave, Edge on a computer | Menu → **Install SeaBathy** → **Install now**, or the install button at the end of the address bar |
+| Safari on a Mac | **File** → **Add to Dock** |
+| Firefox on a computer | Recent versions on Windows have an "add to taskbar" button in the address bar. Otherwise it can't install web apps: press F11 for full screen, or install from Chrome, Edge or Brave |
 
 ## Get depths
 

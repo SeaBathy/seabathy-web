@@ -1,16 +1,56 @@
 {
   "name": "SeaBathy",
   "short_name": "SeaBathy",
-  "description": "Your depth charts and surveys, satellite maps and waypoints, working offline. Not for navigation.",
+  "description": "Download free seabed depths, fly over them in 3D and use them with no signal. Not for navigation.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#060b14",
   "theme_color": "#060b14",
-  "categories": ["navigation", "sports", "utilities"],
+  "categories": [
+    "navigation",
+    "sports",
+    "utilities"
+  ],
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshots/chart.jpg",
+      "sizes": "786x1318",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Seabed depths on the chart"
+    },
+    {
+      "src": "screenshots/3d-seabed.jpg",
+      "sizes": "786x1318",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "The seabed in 3D"
+    },
+    {
+      "src": "screenshots/draw-area.jpg",
+      "sizes": "786x1318",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Draw the area to download"
+    }
   ]
 }

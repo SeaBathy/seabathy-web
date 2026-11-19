@@ -3,7 +3,7 @@
 
 import { setting } from './db.js';
 import * as updates from './updates.js';
-import { add, card, confirmCard, el, openSheet, refreshSheet, heading, note, row, toast, toggle } from './ui.js';
+import { add, button, card, closeSheet, confirmCard, el, openSheet, refreshSheet, topSheet, heading, note, row, toast, toggle } from './ui.js';
 
 export const VERSION = '0.3.2';
 /** Raise when the wording changes in a way people should agree to again. */
@@ -23,11 +23,73 @@ export const isStandalone = () => navigator.standalone === true || matchMedia('(
 /** An iPhone or iPad (an iPad says it is a Mac, but a Mac has no touch screen). */
 export const isIos = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+/** The browser's own offer to install, where it makes one (Chrome, Edge, Brave and their kin). */
 let installPrompt = null;
+const INSTALL_TITLE = 'Install SeaBathy';
 window.addEventListener('beforeinstallprompt', (event) => {
-  event.preventDefault();
+  // The browser's own small offer (Chrome on Android shows one) is left to show: the offer is
+  // only kept here as well, for the Install button.
   installPrompt = event;
+  if (topSheet()?.title === INSTALL_TITLE) refreshSheet();
 });
+window.addEventListener('appinstalled', () => {
+  installPrompt = null;
+  toast('SeaBathy is installed. Open it from its own icon.', 6000);
+});
+
+/** Which browser this is, as far as installing goes. */
+function browser() {
+  const ua = navigator.userAgent;
+  if (isIos()) return 'ios';
+  const android = /Android/.test(ua);
+  if (/Firefox\//.test(ua)) return android ? 'firefoxAndroid' : 'firefox';
+  if (/SamsungBrowser/.test(ua)) return 'samsung';
+  if (/Edg\//.test(ua)) return android ? 'chromeAndroid' : 'edge';
+  // Brave, Opera and Vivaldi say they are Chrome, and install the same way.
+  if (/Chrome\//.test(ua)) return android ? 'chromeAndroid' : 'chrome';
+  if (/Safari\//.test(ua)) return 'safariMac';
+  return 'other';
+}
+
+/** How to install by hand, browser by browser: a page can't do it itself except through installPrompt. */
+const BY_HAND = {
+  ios: ['iPhone and iPad', ['Open this page in Safari.', 'Tap the Share button (a square with an arrow pointing up). On newer iPhones it is under the ••• button.', 'Scroll down and tap Add to Home Screen, then Add.']],
+  chromeAndroid: ['Chrome, Brave or Edge on Android', ['Open the browser\'s ⋮ menu.', 'Tap Add to Home screen, then Install.']],
+  firefoxAndroid: ['Firefox on Android', ['Open the ⋮ menu.', 'Tap Add app to Home screen (on some versions it is called Install).']],
+  samsung: ['Samsung Internet', ['Tap the ☰ menu at the bottom.', 'Tap Add to, then Home screen.']],
+  chrome: ['Chrome or Brave on a computer', ['Click the install button at the right-hand end of the address bar (a small screen with an arrow).', 'If it isn\'t there, open the browser\'s menu and look for Install SeaBathy, under Save and share.']],
+  edge: ['Edge on a computer', ['Open the ⋯ menu, then Apps, then Install this site as an app.']],
+  safariMac: ['Safari on a Mac', ['In the menu bar choose File, then Add to Dock.']],
+  firefox: ['Firefox on a computer', ['On Windows, recent versions have an "add to taskbar" button at the right-hand end of the address bar: it opens SeaBathy in a window of its own.', 'Otherwise Firefox on a computer can\'t install web apps. Press F11 for a full screen without the address bar, or open this address in Chrome, Edge or Brave and install it there.']],
+  other: ['Another browser', ['Look for Install or Add to Home screen in the browser\'s menu.', 'On a computer, F11 gives a full screen without the address bar.']]
+};
+
+/** True where the app can still be installed: it is running in a browser tab. */
+export const canInstall = () => !isStandalone();
+
+/** "Install SeaBathy": one tap where the browser offers it, and the steps by hand for every browser. */
+export function openInstall() {
+  openSheet(INSTALL_TITLE, (body) => {
+    const mine = browser();
+    const steps = ([title, lines]) => [heading(title.toUpperCase()), el('ol', { class: 'steps' }, lines.map((text) => el('li', { text })))];
+    add(body,
+      note('Installed, SeaBathy opens from its own icon in a window of its own, without the browser\'s address bar. It is the same app, and still free.'),
+      installPrompt ? el('div', { class: 'actions' }, button('Install now', async () => {
+        const offer = installPrompt;
+        installPrompt = null;
+        offer.prompt();
+        const choice = await offer.userChoice.catch(() => null);
+        if (choice?.outcome === 'accepted') closeSheet();
+        else refreshSheet();
+      }, { primary: true, id: 'install-now' })) : null,
+      steps([installPrompt ? 'Or by hand, in this browser' : 'In this browser', BY_HAND[mine][1]]),
+      note(isIos()
+        ? 'Install first, then get your depths: what Safari holds does not move to the installed app.'
+        : 'What you have already downloaded in this browser is there in the installed app too.'),
+      heading('OTHER BROWSERS'),
+      Object.entries(BY_HAND).filter(([key]) => key !== mine && key !== 'other').map(([, [title, lines]]) => note(`${title}: ${lines.join(' ')}`)));
+  });
+}
 
 /** The agreement, if it hasn't been accepted yet. It can't be put aside without agreeing. */
 export async function showTermsIfNeeded() {
@@ -122,10 +184,7 @@ export function openAbout() {
       heading('INSTALL ON AN IPHONE OR IPAD'),
       el('ol', { class: 'steps' }, INSTALL_STEPS.map((text) => el('li', { text }))),
       note(isStandalone() ? 'This copy is running from the Home Screen.' : 'This copy is running in the browser. Charts and waypoints kept here do not move to the installed app: install first, then load your charts.'),
-      installPrompt ? row('Install this app', 'Add it to this device', async () => {
-        installPrompt.prompt();
-        installPrompt = null;
-      }) : null,
+      canInstall() ? row('Install SeaBathy', 'One tap where the browser allows it, and the steps for every other browser', openInstall, { id: 'about-install' }) : null,
       heading('GETTING DEPTHS'),
       note('Menu, Get seabed depths: draw a box on the chart over the water you want, and the app downloads free depths for it and keeps them on the phone. They work with no signal, and the 3D button flies you over them.'),
       note('In Australian waters you can choose High detail: the IMAS composite, 10 m on the shelf, sent by IMAS\'s own server. A box up to about 30 km square comes at the full 10 m; a bigger one comes coarser, so draw a small box for the spot that matters. Anywhere else, and as the other choice in Australia, the depths are the worldwide GMRT model.'),

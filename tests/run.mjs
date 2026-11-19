@@ -991,6 +991,32 @@ await step('Storage: the space used is shown, and deleting a chart frees its fil
   return usage;
 }, stores);
 
+await step('Install: the menu offers it, with one tap where the browser makes an offer and the steps for every other browser', async () => {
+  await openMenu(page, 'menu-install');
+  const said = await page.locator('#sheet-body').innerText();
+  // These tests run as an iPhone, so its own steps come first; every other browser is listed.
+  expect(/IN THIS BROWSER/.test(said) && /Add to Home Screen/.test(said), 'the steps for this browser are missing');
+  for (const name of ['Chrome, Brave or Edge on Android', 'Firefox on Android', 'Samsung Internet', 'Chrome or Brave on a computer', 'Edge on a computer', 'Safari on a Mac', 'Firefox on a computer']) {
+    expect(said.includes(name), `no steps for ${name}`);
+  }
+  expect(await page.locator('#install-now').count() === 0, 'an Install button is shown although the browser made no offer');
+  // A browser that offers to install (Chrome, Edge, Brave): the panel gains the button, and it calls on the browser.
+  await page.evaluate(() => {
+    const offer = new Event('beforeinstallprompt');
+    offer.prompt = () => { window.installAsked = true; };
+    offer.userChoice = Promise.resolve({ outcome: 'dismissed' });
+    window.dispatchEvent(offer);
+  });
+  await page.click('#install-now');
+  expect(await page.evaluate(() => window.installAsked === true), 'the Install button did not call on the browser');
+  await shot(page, '8b-install');
+  await closeSheet(page);
+  const manifest = JSON.parse(readFileSync(path.join(appRoot, 'manifest.json'), 'utf8'));
+  expect(manifest.display === 'standalone' && manifest.icons.some((i) => i.sizes === '512x512') && manifest.icons.some((i) => i.purpose === 'maskable'), 'the manifest is missing what browsers need to install the app');
+  for (const picture of manifest.screenshots) expect(existsSync(path.join(appRoot, picture.src)), `the manifest names a picture that is not there: ${picture.src}`);
+  return `steps for ${said.split('\n').filter((line) => /: /.test(line) && / on |Safari|Samsung|iPhone/.test(line)).length + 1} browsers; the Install button calls the browser's own offer`;
+});
+
 await step('Licences: SeaBathy\'s own, the libraries\' and the font\'s all read inside the app', async () => {
   await openMenu(page, 'menu-about');
   await page.click('#about-licences');

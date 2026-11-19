@@ -9,7 +9,7 @@ import * as waypoints from './waypoints.js';
 import { setting } from './db.js';
 import { PALETTES, drawLegend, normalised, MAX_HILLSHADE_EXAGGERATION } from './depth.js';
 import { add, el, toast, openSheet, refreshSheet, topSheet, backFrom, closeSheet, row, button, field, heading, note, toggle, slider, confirmCard, progressCard, holdScreenOn, card } from './ui.js';
-import { openAbout } from './install.js';
+import { openAbout, openInstall, canInstall } from './install.js';
 import * as seabed from './seabed.js';
 import * as terrain from './terrain.js';
 
@@ -33,6 +33,7 @@ function describe(chart) {
 export function openMenu() {
   openSheet('SeaBathy', (body) => {
     add(body, 
+      canInstall() ? row('Install SeaBathy', 'Its own icon and window, without the address bar', openInstall, { id: 'menu-install' }) : null,
       row('Get seabed depths', 'Draw an area and download free depths for it, anywhere in the world. They work offline and in 3D', () => seabed.show(map), { id: 'menu-seabed' }),
       row('Charts', charts.list().length ? plural(charts.list().length, 'chart') : 'Your depth layers, and files of your own', openCharts, { id: 'menu-charts' }),
       row('Maps', `${basemap.basemapById(basemap.state.basemap).label}${basemap.state.satOn ? ' with satellite' : ''}`, openMaps, { id: 'menu-maps' }),
