@@ -16,7 +16,7 @@
 // PASS=both runs the two one after the other. A real iPhone has none of these limits.
 
 import { webkit, chromium, devices } from 'playwright';
-import { rmSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -132,7 +132,10 @@ async function open(page) {
   expect(!fatal, `the app did not start: ${fatal}`);
   if (await page.locator('#install').isVisible()) await page.click('#install-skip');
   const agree = page.locator('#terms-agree');
-  if (await agree.count()) await agree.click();
+  if (await agree.count()) {
+    await agree.click();
+    await page.click('#updates-ask');
+  }
   await page.waitForFunction(() => window.seabathy.map.loaded(), null, { timeout: LOAD });
 }
 
@@ -174,7 +177,9 @@ const tileOf = `(lng, lat, z) => {
 rmSync(profile, { recursive: true, force: true });
 mkdirSync(shots, { recursive: true });
 const fixtures = await writeFixtures(path.join(workDir, 'data'));
-const appServer = await serve({ root: appRoot, port: APP_PORT });
+/** Files the app's server answers with something other than what is on disk (a newer version). */
+const swap = new Map();
+const appServer = await serve({ root: appRoot, port: APP_PORT, swap });
 const dataServer = await serve({ root: path.join(workDir, 'data'), port: DATA_PORT, cors: true });
 console.log(`\n${engineName} on ${process.platform}, set up as an iPhone 15, at ${APP}: ${kept ? 'a profile kept on disk' : 'a private window'}${worker ? '' : ', service worker off'}\n`);
 
@@ -196,6 +201,13 @@ await step('Opens over HTTPS; the install screen shows first, then the agreement
   expect((await page.locator('.card').innerText()).includes('must not be used for navigation'), 'the agreement text is missing');
   await shot(page, '2-agreement');
   await page.click('#terms-agree');
+  // Then, once: automatic updates, or a tap each time.
+  await page.waitForSelector('#updates-ask');
+  expect((await page.locator('.card').innerText()).includes('Keep SeaBathy up to date'), 'the question about updates is missing');
+  await shot(page, '2b-updates');
+  await page.click('#updates-ask');
+  await page.waitForFunction(() => !document.querySelector('.overlay'));
+  expect(await page.evaluate(() => window.seabathy.updates.mode()) === 'ask', 'the choice about updates was not kept');
   // The blank basemap for the tests: they then need nothing from the internet.
   await page.evaluate(() => window.seabathy.basemap.setBasemap('none'));
   await page.waitForFunction(() => window.seabathy.map.loaded() && Boolean(window.seabathy.map.getLayer('sb-top')), null, { timeout: LOAD });
@@ -402,9 +414,71 @@ await step('Get seabed depths: the area on screen is downloaded and kept as a de
   // Asking again for the same area goes to the copy on the phone.
   await goTo(page, MID.lng, MID.lat, 10.5);
   await openMenu(page, 'menu-seabed');
+  await page.click('#seabed-go');
   await page.waitForFunction(() => /already on this phone/.test(document.querySelector('#toast').textContent), null, { timeout: 10000 });
   expect((await requests()).length === 1, 'the same area was downloaded twice');
   return `${info.name}; ${info.min.toFixed(1)} to ${info.max.toFixed(1)} m`;
+});
+
+await step('High detail: in Australian waters, the 10 m composite is asked for from its own server and kept', async () => {
+  await page.evaluate((url) => window.seabathy.seabed.useServer(url, 'imas'), `${DATA}high-detail-service`);
+  const requests = () => page.evaluate((prefix) => performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.startsWith(prefix)), `${DATA}high-detail-service`);
+  // What is asked for a small area and for a big one: full detail, or thinned to fit a phone.
+  const plans = await page.evaluate(async () => {
+    const seabed = await import('./js/seabed.js');
+    await (await import('./js/ui.js')).loadScript('vendor/proj4.js');
+    const forward = (p) => window.proj4('EPSG:4326', '+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs').forward(p);
+    const small = seabed.highDetailPlan({ west: 149.0, south: -20.2, east: 149.1, north: -20.1 }, forward);
+    const wide = seabed.highDetailArea({ west: 148, south: -21, east: 150, north: -19 });
+    return { small, wide, big: seabed.highDetailPlan(wide, forward), outside: seabed.inAustralianWaters({ west: -10, south: 40, east: -9, north: 41 }), inside: seabed.inAustralianWaters({ west: 149, south: -20.2, east: 149.1, north: -20.1 }) };
+  });
+  expect(plans.small.scale === 1 && plans.small.detail === 10 && plans.small.cells < 2e6, `a 10 km area is planned as ${JSON.stringify(plans.small)}`);
+  expect(plans.wide.trimmed && plans.big.scale < 1 && plans.big.cells <= 9e6 && plans.big.detail > 30 && plans.big.detail < 45, `a 200 km area is planned as ${JSON.stringify(plans.big)}`);
+  expect(plans.inside && !plans.outside, 'Australian waters are not told from the rest');
+
+  await goTo(page, MID.lng, MID.lat, 12);
+  await openMenu(page, 'menu-seabed');
+  const said = await page.locator('.card').innerText();
+  expect(/High detail/.test(said) && /IMAS/.test(said) && /10 m detail/.test(said), 'the high-detail choice is not offered or explained');
+  await page.click('#seabed-high');
+  await page.waitForFunction(() => window.seabathy.charts.list().length === 4, null, { timeout: LOAD });
+  const asked = await requests();
+  expect(asked.length === 1, `IMAS's server was asked ${asked.length} times`);
+  const url = new URL(asked[0]);
+  const subsets = url.searchParams.getAll('subset').join(' ');
+  const [, e0, e1] = /E\(([-\d.]+),([-\d.]+)\)/.exec(subsets) || [];
+  const [, n0, n1] = /N\(([-\d.]+),([-\d.]+)\)/.exec(subsets) || [];
+  const [mx, my] = fixtures.albersMiddle;
+  expect(url.searchParams.get('request') === 'GetCoverage' && url.searchParams.get('coverageId').endsWith('Aus_multires_bathymetry_composite_EEZ') && url.searchParams.get('format') === 'image/tiff',
+    `the request was ${asked[0].split('?')[1].slice(0, 160)}`);
+  // The box asked for is in the composite's own grid, round the middle of the screen, on whole 10 m cells.
+  expect(Number(e0) < mx && Number(e1) > mx && Number(n0) < my && Number(n1) > my && Number(e0) % 10 === 0 && Number(n1) % 10 === 0, `the box asked for was ${subsets}`);
+  expect(Number(e1) - Number(e0) < 30000 && Number(e1) - Number(e0) > 5000 && !url.searchParams.has('scalefactor'), `a screen at zoom 12 was asked for as ${subsets} ${url.searchParams.get('scalefactor') || ''}`);
+  const probe = fixtures.albersProbe;
+  const info = await page.evaluate(async ([lng, lat]) => {
+    const c = window.seabathy.charts.list().at(-1);
+    const survey = await import('./js/survey.js');
+    return { name: c.name, credit: c.attribution, crs: c.tiff.crs.label, flipped: c.tiff.flipped, depth: await survey.depthAt(c, lng, lat), session: Boolean(c.session), credits: document.querySelector('#credits').textContent };
+  }, [probe.lng, probe.lat]);
+  expect(/^High detail 20\.20S 149\.10E/.test(info.name), `it was saved as "${info.name}"`);
+  expect(/Albers/.test(info.crs) && !info.flipped, `it was read as ${info.crs}`);
+  expect(Math.abs(info.depth - probe.depth) < 0.1, `depth ${info.depth} where ${probe.depth} was written`);
+  expect(info.credit.includes('IMAS') && info.credits.includes('IMAS'), 'the IMAS composite is not credited on the chart');
+  expect(info.session === !stores, 'the depths were not kept as expected');
+  // Asking again for the same area goes to the copy on the phone.
+  await goTo(page, MID.lng, MID.lat, 12);
+  await openMenu(page, 'menu-seabed');
+  await page.click('#seabed-high');
+  await page.waitForFunction(() => /already on this phone/.test(document.querySelector('#toast').textContent), null, { timeout: 10000 });
+  expect((await requests()).length === 1, 'the same area was downloaded twice');
+  // Tidied away for the checks that follow.
+  await openMenu(page, 'menu-charts');
+  await page.locator('#sheet-body .row').first().click();
+  await page.click('#chart-delete');
+  await page.click('#confirm-yes');
+  await page.waitForFunction(() => window.seabathy.charts.list().length === 3, null, { timeout: 10000 });
+  await closeSheet(page);
+  return `${info.name}; ${info.crs}; ${info.depth.toFixed(2)} m where ${probe.depth.toFixed(2)} m was written; box ${Math.round((Number(e1) - Number(e0)) / 1000)} × ${Math.round((Number(n1) - Number(n0)) / 1000)} km at full detail`;
 });
 
 await step('3D: the seabed opens in 3D; height, a depth band, colours and a waypoint all work', async () => {
@@ -706,6 +780,93 @@ await step('Storage: the space used is shown, and deleting a chart frees its fil
   return usage;
 }, stores);
 
+await step('Licences: SeaBathy\'s own, the libraries\' and the font\'s all read inside the app', async () => {
+  await openMenu(page, 'menu-about');
+  await page.click('#about-licences');
+  const read = async (index, words) => {
+    await page.locator('#sheet-body .row').nth(index).click();
+    await page.waitForFunction((wanted) => wanted.every((w) => document.querySelector('#sheet-body .licence')?.textContent.includes(w)), words, { timeout: 20000 });
+    const length = await page.evaluate(() => document.querySelector('#sheet-body .licence').textContent.length);
+    await page.evaluate(() => document.querySelector('#sheet-back').click());
+    return length;
+  };
+  const own = await read(0, ['GNU GENERAL PUBLIC LICENSE', 'Version 3']);
+  const libraries = await read(1, ['maplibre-gl', 'pmtiles', 'geotiff', 'proj4', 'three', 'lerc', 'Apache License', 'Copyright 2015-2021 Esri', 'Mapbox']);
+  const font = await read(2, ['SIL OPEN FONT LICENSE']);
+  await shot(page, '8-licences');
+  await closeSheet(page);
+  return `${Math.round(own / 1000)}, ${Math.round(libraries / 1000)} and ${Math.round(font / 1000)} thousand characters`;
+});
+
+await step('Updates: "ask first" waits for a tap, "automatic" switches at the next start, and the charts stay', async () => {
+  const sw = readFileSync(path.join(appRoot, 'sw.js'), 'utf8');
+  const current = /const VERSION = '([^']+)'/.exec(sw)[1];
+  const newer = (version) => swap.set('/sw.js', sw.replace(`const VERSION = '${current}'`, `const VERSION = '${version}'`));
+  /** The version of the copy of the app now in charge of the page. */
+  const inCharge = () => page.evaluate(() => new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (event) => resolve(event.data);
+    navigator.serviceWorker.controller.postMessage('version', [channel.port2]);
+    setTimeout(() => resolve(null), 3000);
+  })).catch(() => null);
+  /** Waits through the page loading again. */
+  const until = async (what, check, ms = 90000) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      if (await Promise.resolve().then(check).catch(() => false)) return;
+      if (Date.now() > end) {
+        const seen = await page.evaluate(async () => {
+          const r = await navigator.serviceWorker.getRegistration();
+          return { started: Boolean(window.seabathy?.map.loaded()), app: typeof window.seabathy, mode: await window.seabathy?.updates.mode(), waiting: Boolean(r?.waiting), installing: Boolean(r?.installing), fatal: document.querySelector('#fatal')?.hidden === false, card: document.querySelector('.overlay')?.textContent.slice(0, 80) || null };
+        }).catch((e) => String(e.message).split('\n')[0]);
+        throw new Error(`${what} (${JSON.stringify(seen)})`);
+      }
+      await page.waitForTimeout(250);
+    }
+  };
+  // The copy in charge can't be replaced while it is kept busy answering questions, so the
+  // page is marked, and nothing is asked until it has opened again without the mark.
+  const mark = () => page.evaluate(() => { window.beforeUpdate = true; });
+  const reopened = () => page.evaluate(() => !window.beforeUpdate && Boolean(window.seabathy?.map.loaded()));
+  const kept = () => page.evaluate(() => ({ charts: window.seabathy.charts.list().length, waypoints: window.seabathy.waypoints.list().length }));
+  const before = await kept();
+  expect(await inCharge() === current, `the copy in charge is not version ${current}`);
+
+  // Ask first: found from About, and nothing changes on "Cancel".
+  newer('9.9.1');
+  await openMenu(page, 'menu-about');
+  await page.click('#about-update');
+  await page.waitForSelector('#confirm-yes', { timeout: 90000 });
+  expect((await page.locator('.card').innerText()).includes('Version 9.9.1 is ready'), 'the card does not name the new version');
+  await page.locator('.card .btn', { hasText: 'Cancel' }).click();
+  await closeSheet(page);
+  await page.waitForSelector('#update:not([hidden])');
+  expect((await page.locator('#update').innerText()).includes('Version 9.9.1 is ready'), 'the bar does not name the new version');
+  await shot(page, '9-update-ready');
+  expect(await inCharge() === current, 'the new version took over before it was asked to');
+  // A tap on the bar: the app opens again in the new version.
+  await mark();
+  await page.click('#update');
+  await until('the app did not open again after the tap', reopened);
+  expect(await inCharge() === '9.9.1', 'the new version did not take over after the tap');
+  expect(await page.locator('#update').isHidden(), 'the bar is still there after the update');
+  expect((await page.evaluate(() => caches.keys())).filter((n) => n.startsWith('seabathy-')).join() === 'seabathy-9.9.1', 'the old copy of the app was not cleared away');
+
+  // Automatic: fetched quietly, and used from the next start.
+  await page.evaluate(() => window.seabathy.updates.setMode('auto'));
+  newer('9.9.2');
+  expect(await page.evaluate(() => window.seabathy.updates.check()) === 'ready', 'the second new version was not fetched');
+  expect(await page.locator('#update').isHidden(), 'the bar shows although updates are automatic');
+  expect(await inCharge() === '9.9.1', 'the automatic update took over while the app was in use');
+  await mark();
+  await page.reload({ waitUntil: 'load', timeout: LOAD });
+  await until('the app did not start again', reopened);
+  expect(await inCharge() === '9.9.2', 'the automatic update was not used at the next start');
+  const after = await kept();
+  expect(after.charts === before.charts && after.waypoints === before.waypoints, `after the updates: ${JSON.stringify(after)}, before: ${JSON.stringify(before)}`);
+  return `${current} to 9.9.1 after a tap, then to 9.9.2 by itself at the next start; ${after.charts} charts and ${after.waypoints} waypoint still there`;
+}, worker);
+
 await step('The app\'s own files: all listed for offline use, and one version number throughout', async () => {
   const sw = readFileSync(path.join(appRoot, 'sw.js'), 'utf8');
   const listed = new Set([...sw.matchAll(/^\s+'([^']+)',?$/gm)].map((m) => m[1]));
@@ -719,8 +880,10 @@ await step('The app\'s own files: all listed for offline use, and one version nu
     }
   };
   for (const dir of ['js', 'css', 'vendor', 'glyphs', 'icons', '3d']) walk(dir);
-  for (const file of ['index.html', 'manifest.json']) if (!listed.has(file)) missing.push(file);
+  for (const file of ['index.html', 'manifest.json', 'LICENSE', 'THIRD-PARTY-NOTICES.txt', 'glyphs/LICENSE.txt']) if (!listed.has(file)) missing.push(file);
   expect(!missing.length, `not listed for offline use: ${missing.join(', ')}`);
+  const absent = [...listed].filter((file) => file !== './' && !existsSync(path.join(appRoot, file)));
+  expect(!absent.length, `listed for offline use but not there: ${absent.join(', ')}`);
   const versions = [
     /const VERSION = '([^']+)'/.exec(sw)?.[1],
     /export const VERSION = '([^']+)'/.exec(readFileSync(path.join(appRoot, 'js/install.js'), 'utf8'))?.[1],

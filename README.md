@@ -1,9 +1,17 @@
 # SeaBathy web app
 
-**See what's under the boat, on an iPhone.** Download free seabed depths for anywhere in the
-world, fly over them in 3D, and take them out with no signal. It runs in the browser and
-installs from Safari to the Home Screen, so it needs no App Store. It also works on Android
-and on a computer.
+![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
+![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-informational)
+![Works offline](https://img.shields.io/badge/works-offline-success)
+![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
+
+**See what's under the boat, on an iPhone.** Download free seabed depths, fly over them in 3D,
+and take them out with no signal. It runs in the browser and installs from Safari to the Home
+Screen, so it needs no App Store. It also works on Android and on a computer.
+
+| The chart | The seabed in 3D | Satellite on the seabed |
+|---|---|---|
+| ![Depths on the chart](screenshots/chart.jpg) | ![The seabed in 3D](screenshots/3d-seabed.jpg) | ![The satellite picture on the 3D seabed](screenshots/3d-satellite.jpg) |
 
 > **Not for navigation.** SeaBathy is not a nautical chart and must not be used for navigation.
 > Its data comes from public sources and from the files you load, and can be wrong or out of
@@ -12,24 +20,29 @@ and on a computer.
 
 This is the web version of [SeaBathy](https://seabathy.com). It has the core of the Android
 app: depth download, the 3D seabed, depth colours, satellite, waypoints and GPS. The Android
-and Windows apps do more (high-detail Australian depths, tides, sea conditions, routes, tracks,
-anchor alarm).
+and Windows apps do more (tides, sea conditions, routes, tracks, anchor alarm).
 
 ## Contents
 
-- [Install on an iPhone or iPad](#install-on-an-iphone-or-ipad)
+- [Install](#install)
 - [Get depths](#get-depths)
 - [The seabed in 3D](#the-seabed-in-3d)
+- [With no signal](#with-no-signal)
 - [What it does](#what-it-does)
 - [What an iPhone web app can't do](#what-an-iphone-web-app-cant-do)
 - [Storage on the phone](#storage-on-the-phone)
+- [Updates](#updates)
 - [Your own files](#your-own-files)
 - [Publishing the app](#publishing-the-app)
 - [Development and tests](#development-and-tests)
 - [Privacy](#privacy)
-- [Credits and licence](#credits-and-licence)
+- [Credits and licences](#credits-and-licences)
 
-## Install on an iPhone or iPad
+## Install
+
+<img src="screenshots/install.jpg" alt="Add SeaBathy to your Home Screen" width="300"> <img src="screenshots/menu.jpg" alt="The menu" width="300">
+
+**iPhone or iPad** (iOS 15.2 or newer):
 
 1. Open the app's web address in **Safari**.
 2. Tap the **Share** button (a square with an arrow pointing up). On newer iPhones it is under
@@ -42,20 +55,35 @@ anchor alarm).
 Install first, then get your depths. Safari and the installed app keep their data apart, so
 anything you add in Safari does not appear in the installed app.
 
-Needs iOS 15.2 or newer. On Android, open the address in Chrome and choose **Install app**.
+**Android:** open the address in Chrome and choose **Install app**.
+**Computer:** open the address in any current browser; Chrome and Edge can install it too.
 
 ## Get depths
 
+<img src="screenshots/get-depths.jpg" alt="Get seabed depths" width="300">
+
 1. Move the chart to the water you want and zoom until it fills the screen.
-2. Menu (☰) → **Get seabed depths** → **Download**.
+2. Menu (☰) → **Get seabed depths**.
 3. The depths arrive as a coloured layer and are kept on the phone. From then on they work
    with no signal.
 
-The depths come from GMRT, a free worldwide model built from ship surveys. They are sharpest
-where ships have surveyed and coarser elsewhere. One download holds up to about 440 km across
-and 55 MB; a smaller area comes in finer detail, so zoom in for the spot that matters.
+There are two kinds:
+
+- **High detail, in Australian waters.** The IMAS multi-resolution bathymetry composite, with
+  10 m detail on the continental shelf. The area on screen is cut out and sent by IMAS's own
+  map server. An area up to about 30 km square comes at the full 10 m; a bigger one, up to
+  110 km, comes coarser, so zoom in for the spot that matters.
+- **Worldwide.** GMRT, a free model of the whole ocean built from ship surveys. It is sharpest
+  where ships have surveyed and much coarser elsewhere. One download holds up to about 440 km
+  across and 55 MB.
+
+The high-detail depths rely on a public IMAS server that this project does not run. If IMAS
+changes it, **High detail** stops working until the app is updated; depths already on the
+phone and the worldwide depths are not affected.
 
 ## The seabed in 3D
+
+<img src="screenshots/3d-controls.jpg" alt="The 3D view's options" width="300"> <img src="screenshots/3d-depth-band.jpg" alt="Only the water between 20 and 45 m" width="300">
 
 Tap **3D** on the chart while depths are on screen (or **See it in 3D** on a depth layer).
 The viewer is the Android app's own:
@@ -73,12 +101,29 @@ The viewer is the Android app's own:
 
 Where the area takes in land, 3D opens on the water alone; the Depth tab brings the land back.
 
+## With no signal
+
+Once you have what you want, the app needs no internet:
+
+- **The app itself** is kept on the phone after its first start.
+- **Depths** you downloaded, and files you loaded, are kept on the phone, on the chart and in 3D.
+- **The satellite picture** works for the areas you saved with **Save for offline**.
+- **GPS** comes from the phone, not the internet, so the boat shows on the chart and in 3D.
+- **Waypoints** and GPX files are kept on the phone.
+
+Only these need a connection: downloading new depths, the street and topographic basemaps,
+satellite outside the areas you saved, and looking for a newer version of the app. With no
+signal the chart is your depths and saved satellite on a plain background.
+
 ## What it does
 
-- **Free depths anywhere,** downloaded in the app and kept on the phone.
+- **Free depths,** downloaded in the app and kept on the phone: high detail in Australian
+  waters, and the whole world at coarser detail.
 - **3D seabed** of any depth layer, with everything listed above.
 - **Depth colours** on the chart: seven palettes, your own depth range, ready-made ranges
   (reef, inshore, coastal, offshore) and relief shading. The depth at the crosshair.
+
+  <img src="screenshots/depth-colours.jpg" alt="Depth colours" width="300">
 - **Basemaps:** dark, street map, OpenStreetMap, OpenTopoMap, USGS imagery, your own tile link
   with its credit, or none.
 - **Satellite picture** over the chart with an opacity slider, and savable for offline use.
@@ -89,17 +134,16 @@ Where the area takes in land, 3D opens on the water alone; the Depth tab brings 
 - **GPS:** the boat on the chart and in 3D, with speed, course and accuracy, and a follow mode.
 - **Your own files:** GeoTIFF depth surveys and PMTiles charts.
 - **Storage:** how much the app is using, and a delete button for every layer and saved area.
+- **Updates** by itself or after a tap, as you choose.
 
 ## What an iPhone web app can't do
 
 - **No GPS with the screen locked.** The position stops when the phone locks or another app is
   in front, so there is no track recording in a pocket and no overnight anchor alarm.
-- **No high-detail Australian depths yet.** The Android app builds these from the IMAS
-  composite, but that server does not let web pages read it, as browsers require. It would
-  need IMAS to allow it, or a small relay in between.
 - **The phone may ask for location permission again** on later launches.
-- **Smaller limits than the Android app.** The 3D view holds about a million cells, which a
-  phone browser draws comfortably.
+- **Smaller limits than the Android app.** One high-detail download holds about 30 km square
+  at the full 10 m, and the 3D view holds about a million cells, which a phone browser draws
+  comfortably.
 - **Installing is by hand,** from Safari. There is no App Store listing.
 
 ## Storage on the phone
@@ -114,6 +158,20 @@ web app use up to about 60% of the phone's storage.
 - Removing the app from the Home Screen deletes its data.
 
 Downloaded depths can always be downloaded again. Export your waypoints as GPX now and then.
+
+## Updates
+
+When the phone is online, the app looks at its own web address for a newer version and
+downloads it in the background. On the first start it asks which you want:
+
+- **Automatic:** the new version is used the next time you open the app. It never switches
+  while you are in the middle of something.
+- **Ask me first:** a bar at the top says the version is ready, and nothing changes until you
+  tap it.
+
+Change it at any time under Menu → **About and safety** → **Updates**, where **Check for an
+update** also looks straight away. Depths, charts and waypoints stay through every update.
+Looking for an update sends nothing about you or the phone.
 
 ## Your own files
 
@@ -154,7 +212,8 @@ the app's web address. If the address changes later (a new domain, a renamed rep
 everyone starts again with an empty app.
 
 **When you change any file,** raise `VERSION` in `sw.js`, `js/install.js` and `package.json`.
-That is what makes phones fetch the new copy; they offer it with a "new version is ready" bar.
+That is what makes phones fetch the new copy. Publishing the changed files is the whole
+release: each phone finds the new version by itself the next time it is online.
 
 ## Development and tests
 
@@ -165,11 +224,12 @@ npm test
 ```
 
 `npm test` serves the app over HTTPS on this computer and drives it in WebKit (Safari's
-engine) set up as an iPhone: first start, offline reload, a seabed download, the 3D view,
-GeoTIFF surveys, a PMTiles chart, waypoints, GPX, GPS, a web chart, saving an area, a restart
-and deleting a layer. `ENGINE=chromium npm test` runs the same steps in Chromium. `npm run
+engine) set up as an iPhone: first start, offline reload, both depth downloads, the 3D view,
+GeoTIFF surveys, a PMTiles chart, waypoints, GPX, GPS, a web chart, saving an area, a restart,
+deleting a layer, the licence texts, and an update taken both ways (after a tap, and by itself
+at the next start). `ENGINE=chromium npm test` runs the same steps in Chromium. `npm run
 serve` just serves the app at `https://localhost:8443/`. The test files are made by the tests
-themselves, and their own server stands in for the depth service.
+themselves, and their own server stands in for the depth services.
 
 **WebKit on Windows is a cut-down build.** It can't write to private file storage, and with a
 profile kept on disk it is very slow and its service worker never finishes installing. So on
@@ -186,45 +246,66 @@ Every push to GitHub also runs the tests in WebKit on a Mac (`.github/workflows/
 WebKit on a computer is still not an iPhone. The file picker, the Home Screen install, storage
 limits and real GPS can only be checked on a phone.
 
-| Folder | What's in it |
+`node tests/screenshots.mjs` retakes the pictures in this file. It needs the internet, because
+it downloads real depths and the satellite picture.
+
+| Folder or file | What's in it |
 |---|---|
-| `js/` | The app: `app.js` starts it; `seabed.js` downloads depths; `survey.js`, `charts.js` and `depth.js` read and draw them; `terrain.js` runs the 3D view; `basemap.js`, `waypoints.js`, `gps.js`, `offline.js`, `files.js`, `db.js` are what their names say |
-| `3d/` | The 3D viewer: the Android app's (`terrain3d-web`), unchanged but for where it loads three.js from and how it is handed its grid and map tiles |
+| `js/` | The app: `app.js` starts it; `seabed.js` downloads depths; `survey.js`, `charts.js` and `depth.js` read and draw them; `terrain.js` runs the 3D view; `updates.js` keeps the app up to date; `basemap.js`, `waypoints.js`, `gps.js`, `offline.js`, `files.js`, `db.js` are what their names say |
+| `3d/` | The 3D viewer: the Android app's (`terrain3d-web`), changed only in where it loads three.js from, how it is handed its grid and map tiles, keeping land hidden after a reload, a map credit that wraps instead of being cut short, and the wording of its own-map form |
 | `vendor/` | MapLibre GL JS, three.js, PMTiles, geotiff.js and proj4js, as released, with their licences. The two three.js add-ons have their import line pointed at the copy beside them |
 | `glyphs/` | Lettering for depth labels, kept with the app so labels work offline |
 | `sw.js` | Keeps the app's own files on the phone for offline use |
+| `THIRD-PARTY-NOTICES.txt` | The licence of every library inside the app |
+| `screenshots/` | The pictures in this file |
 | `tests/` | The tests and their small HTTPS server |
 
 ## Privacy
 
 SeaBathy has no accounts, ads or analytics, and sends nothing to this project. Your position,
-waypoints and depths stay on your phone. When you download depths, use an online map, or read
-a chart at a web address, your phone asks that service directly, so it sees your internet
-address and the area you asked for. One more request can happen: a survey in an unusual map
-projection makes the app ask [epsg.io](https://epsg.io) once for that projection's definition,
-by its number.
+waypoints and depths stay on your phone. The app talks only to:
 
-## Credits and licence
+- **the depth server** when you download depths: GMRT, or IMAS for high detail;
+- **the map servers** of the maps you turn on;
+- **its own web address,** to fetch itself and to look for a newer version;
+- **any web address you add yourself,** for a map or a chart.
 
-- **Code:** GNU GPL-3.0, see [LICENSE](LICENSE).
+Each of those sees what any web request shows: your internet address and, for maps and depths,
+the area you asked for. One more request can happen: a survey in an unusual map projection
+makes the app ask [epsg.io](https://epsg.io) once for that projection's definition, by its
+number.
+
+## Credits and licences
+
+- **Code:** GNU GPL-3.0, see [LICENSE](LICENSE). SeaBathy is free, with no ads and nothing to
+  buy.
 - **Libraries:** [MapLibre GL JS](https://github.com/maplibre/maplibre-gl-js) and
   [PMTiles](https://github.com/protomaps/PMTiles) (BSD 3-Clause),
   [three.js](https://github.com/mrdoob/three.js),
   [geotiff.js](https://github.com/geotiffjs/geotiff.js) and
-  [proj4js](https://github.com/proj4js/proj4js) (MIT). Their licences are in
+  [proj4js](https://github.com/proj4js/proj4js) (MIT). Their licences, and those of everything
+  they are built from, are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) and
   [`vendor/licenses`](vendor/licenses). Depth labels use Open Sans
-  ([licence](glyphs/LICENSE.txt)).
-- **Maps and data:** each one's credit is shown on the chart while it is shown.
+  ([licence](glyphs/LICENSE.txt)). All of these can be read inside the app: Menu → About and
+  safety → **Licences**.
+- **Maps and data** are not part of the app. Each comes from its own server, and its credit is
+  shown on the chart while it is shown; a tap on the credit line shows every credit in full.
 
 | Map or data | Credit | Terms |
 |---|---|---|
-| Seabed depths | GMRT, the Global Multi-Resolution Topography synthesis: Ryan et al. 2009, doi:10.1029/2008GC002332 | CC BY 4.0. Not to be used for navigation |
-| Dark and street basemaps | OpenFreeMap © OpenMapTiles, © OpenStreetMap contributors | Open data (ODbL). Not offered for saving offline |
-| OpenStreetMap | © OpenStreetMap contributors | ODbL. Not offered for saving offline |
-| OpenTopoMap | © OpenStreetMap contributors, SRTM, OpenTopoMap | CC-BY-SA. Asks for no bulk downloads |
+| High-detail depths | Flukes, E. (2026). Multi-resolution bathymetry composite surface for Australian waters (EEZ). Institute for Marine and Antarctic Studies. doi:10.25959/Y9VF-V723 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
+| Worldwide depths | GMRT, the Global Multi-Resolution Topography synthesis: Ryan et al. 2009, doi:10.1029/2008GC002332 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
+| Dark and street basemaps | OpenFreeMap © OpenMapTiles, © OpenStreetMap contributors | Open data (ODbL). Not saved offline |
+| OpenStreetMap | © OpenStreetMap contributors | ODbL. Shown as you look at it only: its tile servers do not allow saving offline, and the app does not offer it |
+| OpenTopoMap | Map data: © OpenStreetMap contributors, SRTM. Map style: © OpenTopoMap | CC-BY-SA. Asks for no bulk downloads; not saved offline |
 | USGS Imagery | USGS The National Map | US public domain |
-| Sentinel-2 satellite | Sentinel-2 cloudless, https://s2maps.eu, by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2024) | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/): non-commercial use, keep the credit. The one map offered for saving offline |
-| Latest true colour | NASA Global Imagery Browse Services (GIBS) | NASA data, credit requested |
+| Sentinel-2 satellite | EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024) | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/): non-commercial use, keep the credit. The one map offered for saving offline, at a gentle pace |
+| Latest true colour | NASA Global Imagery Browse Services (GIBS), part of NASA's ESDIS | NASA data, credit requested |
 
-A map you add by your own link, and any file you load, is used under its owner's terms: that
-is between you and them.
+A map you add by your own link, and any file you load, is used under its owner's terms. Add
+only a map whose terms allow it, and type the credit its owner asks for.
+
+**The pictures in this file** show depths from the IMAS multi-resolution bathymetry composite
+(Flukes 2026, CC BY 4.0), the basemap by OpenFreeMap © OpenMapTiles, © OpenStreetMap
+contributors, and the satellite picture EOxCloudless https://cloudless.eox.at by EOX IT
+Services GmbH (Contains modified Copernicus Sentinel data 2024).

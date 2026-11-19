@@ -35,8 +35,12 @@ export function certificate() {
   return { key: readFileSync(key), cert: readFileSync(cert) };
 }
 
-/** Serves the files under [root] on [port]. [cors] lets pages from other sites read them. */
-export async function serve({ root, port, cors = false }) {
+/**
+ * Serves the files under [root] on [port]. [cors] lets pages from other sites read them. A
+ * path put in [swap] ('/sw.js', say) is answered with the text given there instead of the file:
+ * that is how the tests put a newer version of the app on the server.
+ */
+export async function serve({ root, port, cors = false, swap = new Map() }) {
   const answer = (request, response) => {
     const headers = { 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes' };
     if (cors) {
@@ -60,6 +64,13 @@ export async function serve({ root, port, cors = false }) {
     if (!file || (file !== root && !file.startsWith(root + path.sep))) {
       response.writeHead(403, headers);
       response.end();
+      return;
+    }
+    const swapped = swap.get(new URL(request.url, 'https://localhost').pathname);
+    if (swapped !== undefined) {
+      const body = Buffer.from(swapped);
+      response.writeHead(200, { ...headers, 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Content-Length': body.length });
+      response.end(request.method === 'HEAD' ? undefined : body);
       return;
     }
     if (existsSync(file) && statSync(file).isDirectory()) file = path.join(file, 'index.html');

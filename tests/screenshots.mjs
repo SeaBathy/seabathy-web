@@ -1,0 +1,119 @@
+// Makes the pictures in the README: the app at iPhone size, with real high-detail depths it
+// downloads for the north of Hook Island in the Whitsundays. Needs the internet (IMAS's
+// server, the basemap and the satellite picture). Run with: node tests/screenshots.mjs
+
+import { chromium, devices } from 'playwright';
+import { rmSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { serve, appRoot, workDir } from './server.mjs';
+
+const out = path.join(appRoot, 'screenshots');
+mkdirSync(out, { recursive: true });
+const server = await serve({ root: appRoot, port: 8499 });
+const profile = path.join(workDir, 'profile-screenshots');
+rmSync(profile, { recursive: true, force: true });
+const context = await chromium.launchPersistentContext(profile, {
+  ...devices['iPhone 15'], deviceScaleFactor: 2, ignoreHTTPSErrors: true, args: ['--ignore-certificate-errors']
+});
+const page = context.pages()[0];
+const shot = (name) => page.screenshot({ path: path.join(out, `${name}.jpg`), type: 'jpeg', quality: 84 });
+const settle = (ms) => page.waitForTimeout(ms);
+const idle = () => page.evaluate(() => new Promise((resolve) => {
+  const map = window.seabathy.map;
+  if (map.areTilesLoaded() && !map.isMoving()) resolve();
+  else map.once('idle', resolve);
+}));
+const ready3d = () => page.waitForFunction(() => {
+  const w = document.querySelector('#view3d')?.contentWindow;
+  return w?.__terrainTest && w.__terrainTest.state().cols > 0 && w.__terrainTest.frames() > 2 && w.document.querySelector('#busy').hidden;
+}, null, { timeout: 120000 });
+
+await page.goto('https://localhost:8499/');
+await page.waitForFunction(() => window.seabathy);
+await shot('install');
+await page.click('#install-skip');
+await page.click('#terms-agree');
+await page.click('#updates-auto');
+await page.evaluate(() => window.seabathy.map.jumpTo({ center: [148.93, -20.08], zoom: 12.4 }));
+await settle(4000);
+await idle();
+
+await page.click('#btn-menu');
+await settle(300);
+await shot('menu');
+await page.click('#menu-seabed');
+await settle(300);
+await shot('get-depths');
+await page.click('#seabed-high');
+await page.waitForFunction(() => window.seabathy.charts.list().length === 1, null, { timeout: 180000 });
+// The "saved" message has gone and the chart has settled, with the crosshair over deep water.
+await settle(8000);
+await page.evaluate(() => window.seabathy.map.jumpTo({ center: [148.936, -20.046], zoom: 12.6 }));
+await settle(1500);
+await idle();
+await settle(600);
+await shot('chart');
+
+await page.click('#btn-menu');
+await page.click('#menu-charts');
+await page.locator('#sheet-body .row').first().click();
+await page.locator('#ramp-palette').scrollIntoViewIfNeeded();
+await settle(400);
+await shot('depth-colours');
+await page.evaluate(() => document.querySelector('#sheet-close').click());
+
+await page.click('#btn-3d');
+await ready3d();
+const frame = page.frameLocator('#view3d');
+// High detail: the full 10 m of the survey in 3D.
+await frame.locator('#detail').selectOption('1024');
+await page.waitForFunction(() => document.querySelector('#view3d').contentWindow.__terrainTest.state().cols > 600, null, { timeout: 60000 });
+await ready3d();
+await frame.locator('[data-exag="10"]').click();
+await settle(1200);
+await shot('3d-controls');
+// With the options out of the way, the view is fitted to the taller space.
+const tidy = async () => {
+  await frame.locator('#sheet-handle').click();
+  await settle(500);
+  await frame.locator('[data-cam="45"]').click();
+  await settle(1800);
+};
+await tidy();
+await shot('3d-seabed');
+
+// Just the water between 20 and 45 m, reloaded at full detail.
+await frame.locator('#sheet-handle').click();
+await frame.locator('[data-tab="depth"]').click();
+await frame.locator('#clip-from').fill('-45');
+await frame.locator('#clip-to').fill('-20');
+await frame.locator('#clip-to').dispatchEvent('change');
+await frame.locator('#btn-isolate').click();
+await page.waitForFunction(() => document.querySelector('#view3d').contentWindow.__terrainTest.state().isolated, null, { timeout: 60000 });
+await ready3d();
+await tidy();
+// The whole band in the picture.
+await frame.locator('[data-cam="reset"]').click();
+await settle(1800);
+await shot('3d-depth-band');
+
+// The whole area again, with the satellite picture blended over the depth colours.
+await frame.locator('#sheet-handle').click();
+await frame.locator('#btn-show-all').click();
+await page.waitForFunction(() => document.querySelector('#view3d').contentWindow.__terrainTest.state().isolated === null, null, { timeout: 60000 });
+await ready3d();
+await frame.locator('[data-tab="map"]').click();
+await frame.locator('.map-item', { hasText: 'Sentinel-2' }).click();
+await settle(9000);
+await frame.locator('#drape-mix').fill('0.8');
+// The islands at three times their height, without the contour labels, for a clear picture.
+await frame.locator('[data-tab="contours"]').click();
+await frame.locator('#contour-labels').uncheck();
+await frame.locator('[data-tab="view"]').click();
+await frame.locator('#exag').fill('338');
+await tidy();
+await shot('3d-satellite');
+
+await context.close();
+server.close();
+console.log(`pictures written to ${out}`);

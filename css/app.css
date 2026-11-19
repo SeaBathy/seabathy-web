@@ -75,6 +75,11 @@ button { cursor: pointer; }
   font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 
+.licence {
+  margin: 0; padding: 4px 2px 24px; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #d5dbe5;
+}
+
 #update {
   position: fixed; z-index: 30; top: calc(var(--top) + 8px); left: 50%; transform: translateX(-50%);
   padding: 10px 16px; border-radius: 20px; border: 0; background: var(--accent); color: var(--accent-ink); font-weight: 600;
@@ -92,7 +97,7 @@ button { cursor: pointer; }
 #readout-depth { color: var(--accent); font-weight: 600; }
 #credits {
   margin-top: 4px; font-size: 10px; line-height: 1.25; color: #d5dbe5; text-shadow: 0 0 2px #000, 0 0 2px #000;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; pointer-events: auto;
 }
 
 .maplibregl-ctrl-bottom-right { bottom: calc(var(--bottom) + 46px); right: calc(var(--right) + 2px); }

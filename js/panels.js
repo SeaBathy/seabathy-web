@@ -39,7 +39,7 @@ export function openMenu() {
       row('Waypoints', waypoints.list().length ? `${plural(waypoints.list().length, 'waypoint')} saved` : 'Mark spots, back them up as GPX', waypoints.openList, { id: 'menu-waypoints' }),
       row('Save for offline', 'Keep the area on screen for use with no signal', openOffline, { id: 'menu-offline' }),
       storageRow(),
-      row('About and safety', 'Not for navigation, how to install, credits', openAbout, { id: 'menu-about' }));
+      row('About and safety', 'Not for navigation, how to install, updates, credits', openAbout, { id: 'menu-about' }));
   }, { root: true });
 }
 
@@ -254,7 +254,7 @@ function openMaps() {
           await basemap.setBasemap('custom');
           refreshSheet();
         }, { primary: true, id: 'custom-save' })),
-      note("Map services belong to their owners and have their own terms, which often limit how a map may be used. Using one within its terms is up to you."),
+      note("Map services belong to their owners and have their own terms, which often limit how a map may be used. Add only a map whose terms allow it, and type the credit its owner asks for."),
       heading('SATELLITE PICTURE'),
       toggle('Show the satellite picture', 'Over the charts, so reef, sand and channels show through', s.satOn, (on) => basemap.setSatellite({ satOn: on }).then(refreshSheet), 'sat-on'),
       s.satOn ? [

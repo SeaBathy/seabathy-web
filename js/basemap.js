@@ -21,7 +21,7 @@ export const BASEMAPS = [
   { id: 'dark', label: 'Dark', detail: 'OpenFreeMap, easy on the eyes', style: 'https://tiles.openfreemap.org/styles/dark', credit: OPENFREEMAP },
   { id: 'streets', label: 'Street map', detail: 'OpenFreeMap, towns and roads', style: 'https://tiles.openfreemap.org/styles/liberty', credit: OPENFREEMAP },
   { id: 'osm', label: 'OpenStreetMap', detail: 'The standard OSM map', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', credit: '© OpenStreetMap contributors', maxZoom: 19 },
-  { id: 'topo', label: 'OpenTopoMap', detail: 'Land contours and hill shading', url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', credit: '© OpenStreetMap contributors, SRTM, OpenTopoMap (CC-BY-SA)', maxZoom: 17 },
+  { id: 'topo', label: 'OpenTopoMap', detail: 'Land contours and hill shading', url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', credit: 'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)', maxZoom: 17 },
   { id: 'usgs', label: 'USGS Imagery', detail: 'Aerial pictures, best over the USA', url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}', credit: 'USGS The National Map', maxZoom: 16 },
   { id: 'custom', label: 'Your own link', detail: 'Any map with a {z}/{x}/{y} tile link' },
   { id: 'none', label: 'None', detail: 'A blank chart: just your layers' }
@@ -31,7 +31,7 @@ export const SATELLITES = [
   {
     id: 'eox_s2cloudless', label: 'Sentinel-2 satellite', detail: 'Cloud-free picture of the world, 10 m detail. Can be saved offline',
     url: 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg',
-    credit: 'Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024)',
+    credit: 'EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024)',
     maxZoom: 15, canSave: true
   },
   { id: 'gibs_true_colour_n20', label: 'Latest true colour (NOAA-20)', detail: "Yesterday or today's pass, about 250 m: water colour, clouds, river plumes", url: gibs('VIIRS_NOAA20_CorrectedReflectance_TrueColor'), credit: GIBS_CREDIT, maxZoom: 9 },
@@ -186,15 +186,16 @@ function baseCredit() {
   if (fallback) return null;
   const chosen = basemapById(state.basemap);
   if (chosen.id !== 'custom') return chosen.credit || null;
-  const text = state.customCredit || 'Custom online tiles';
-  // Esri's terms ask for "Powered by Esri" with any of its maps.
-  return /arcgis/i.test(state.customUrl) && !/Powered by Esri/i.test(text) ? `${text} · Powered by Esri` : text;
+  // A map the person added: the credit is the one they typed for it.
+  return state.customCredit || 'Custom online tiles';
 }
+
+/** Every credit now due, one per map or depth layer shown. */
+export const creditParts = () => [...new Set([baseCredit(), state.satOn ? satelliteById(state.satId).credit : null, ...hooks.credits()].filter(Boolean))];
 
 /** The credit line: "Not for navigation" first, then every map now shown. */
 export function refreshCredits() {
-  const parts = ['Not for navigation', baseCredit(), state.satOn ? satelliteById(state.satId).credit : null, ...hooks.credits()].filter(Boolean);
-  document.getElementById('credits').textContent = [...new Set(parts)].join(' • ');
+  document.getElementById('credits').textContent = ['Not for navigation', ...creditParts()].join(' • ');
 }
 
 export async function start(theMap, theHooks) {

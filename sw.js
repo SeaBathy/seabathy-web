@@ -4,12 +4,14 @@
 //
 // Raise VERSION with every change to any file in FILES: that is what makes phones fetch the new copy.
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const CACHE = `seabathy-${VERSION}`;
 const FILES = [
   './',
   'index.html',
   'manifest.json',
+  'LICENSE',
+  'THIRD-PARTY-NOTICES.txt',
   'css/app.css',
   'js/app.js',
   'js/basemap.js',
@@ -28,6 +30,7 @@ const FILES = [
   'js/terrain.js',
   'js/tiles.js',
   'js/ui.js',
+  'js/updates.js',
   'js/waypoints.js',
   '3d/index.html',
   '3d/terrain.css',
@@ -48,6 +51,7 @@ const FILES = [
   'vendor/three-OrbitControls.js',
   'vendor/three-CSS2DRenderer.js',
   'glyphs/Open Sans Regular/0-255.pbf',
+  'glyphs/LICENSE.txt',
   'icons/apple-touch-icon.png',
   'icons/favicon.svg',
   'icons/icon-192.png',
@@ -60,7 +64,8 @@ self.addEventListener('install', (event) => {
     const cache = await caches.open(CACHE);
     // Straight from the server, not from the browser's own cache: a fresh copy of every file.
     await cache.addAll(FILES.map((file) => new Request(file, { cache: 'reload' })));
-    // The very first install takes over at once; an update waits until the user says so.
+    // The very first install takes over at once; an update waits until the app says to switch
+    // (at its next start with automatic updates, or after a tap).
     if (!self.registration.active) await self.skipWaiting();
   })());
 });
@@ -76,6 +81,8 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data === 'skipWaiting') self.skipWaiting();
+  // The app asks a waiting copy which version it is.
+  if (event.data === 'version') event.ports[0]?.postMessage(VERSION);
 });
 
 self.addEventListener('fetch', (event) => {

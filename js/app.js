@@ -13,7 +13,8 @@ import * as panels from './panels.js';
 import * as terrain from './terrain.js';
 import * as seabed from './seabed.js';
 import * as install from './install.js';
-import { $, toast, wireSheet, sheetIsOpen } from './ui.js';
+import * as updates from './updates.js';
+import { $, card, toast, wireSheet, sheetIsOpen } from './ui.js';
 
 const HOLD_MS = 600;
 const HOLD_SLOP_PX = 10;
@@ -37,34 +38,6 @@ function formatDepth(metres) {
   if (metres > 0) return `${metres.toFixed(metres < 10 ? 1 : 0)} m above the water`;
   const depth = -metres;
   return `${depth.toFixed(depth < 100 ? 1 : 0)} m`;
-}
-
-/** The app keeps itself for offline use, and says when a newer version has arrived. */
-async function registerServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
-  try {
-    const hadController = Boolean(navigator.serviceWorker.controller);
-    const registration = await navigator.serviceWorker.register('sw.js');
-    const offer = (worker) => {
-      if (!worker || !hadController) return;
-      const bar = $('#update');
-      bar.hidden = false;
-      bar.onclick = () => worker.postMessage('skipWaiting');
-    };
-    if (registration.waiting) offer(registration.waiting);
-    registration.addEventListener('updatefound', () => {
-      const worker = registration.installing;
-      worker?.addEventListener('statechange', () => { if (worker.state === 'installed') offer(worker); });
-    });
-    let reloading = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (!hadController || reloading) return;
-      reloading = true;
-      location.reload();
-    });
-  } catch (error) {
-    console.warn('Offline use could not be set up', error);
-  }
 }
 
 /** A finger held still on the chart adds a waypoint there (a right-click does on a computer). */
@@ -141,7 +114,9 @@ function wireReadout(map) {
 
 async function boot() {
   wireSheet();
-  registerServiceWorker();
+  // Nothing in use that loading the page again would lose: no panel or card open, 3D closed,
+  // GPS off, and no chart held only in memory.
+  await updates.start(() => !sheetIsOpen() && !terrain.isOpen() && !gps.isOn() && !document.querySelector('.overlay') && !charts.list().some((c) => c.session));
   // The first start shows the whole world; after that, where the chart was left.
   const camera = await db.setting.get('camera', { center: [20, 5], zoom: 1 });
   setWorkerUrl(new URL('../vendor/maplibre-gl-worker.js', import.meta.url).href);
@@ -191,13 +166,23 @@ async function boot() {
   });
   wireHold(map);
   wireReadout(map);
+  // The credit line is short on a phone: a tap shows every credit in full.
+  $('#credits').addEventListener('click', () => {
+    if (document.querySelector('.overlay')) return;
+    card({
+      title: 'Map and depth credits', subtitle: 'Not for navigation.', paragraphs: basemap.creditParts(), dismissable: true,
+      fine: 'More about each source: Menu, About.', actions: [{ id: 'ok', label: 'Close', primary: true, domId: 'credits-close' }]
+    });
+  });
 
   // For the tests, and for looking into a problem from the browser's console.
-  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, version: install.VERSION };
+  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, version: install.VERSION };
   document.body.classList.add('ready');
 
   await install.showInstallIfNeeded();
   await install.showTermsIfNeeded();
+  await updates.askIfNeeded();
+  updates.noteVersion(install.VERSION);
   // Ask the phone, once the app is in use, not to clear its data when space runs short.
   files.keep();
 }

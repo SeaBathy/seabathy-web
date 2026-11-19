@@ -205,7 +205,9 @@ async function loadGrid() {
     autoContour(Boolean(meta.isolated) || refit);
     applyAll();
     resetClip();
-    if (first && meta.chart && meta.chart.hide) {
+    // In the web app a layer that takes in land keeps to the water each time the whole of it
+    // is loaded again (a change of detail, back from an isolated band), not just the first time.
+    if ((first || (meta.chart?.keepHidden && !meta.isolated)) && meta.chart && meta.chart.hide) {
       $('clip-shallow').value = clipSlider(Math.max(meta.chart.shallow, meta.chart.deep));
       $('clip-deep').value = clipSlider(Math.min(meta.chart.shallow, meta.chart.deep));
       $('clip-on').checked = true;

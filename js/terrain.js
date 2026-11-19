@@ -214,7 +214,7 @@ function meta() {
     // Showing less than the whole survey, so "Whole layer" has something to go back to.
     partial: Boolean(state.isolated) || !whole,
     // The viewer's colours run deep to shallow; the chart's shallow to deep.
-    chart: { label: palette.label, stops: ramp.invert ? stops : [...stops].reverse(), shallow: ramp.shallowMetres, deep, hide: !ramp.showOutside || land },
+    chart: { label: palette.label, stops: ramp.invert ? stops : [...stops].reverse(), shallow: ramp.shallowMetres, deep, hide: !ramp.showOutside || land, keepHidden: land },
     waypoints: waypoints.list().map(waypointJson),
     drapes: drapeList()
   };

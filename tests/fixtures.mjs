@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { buildTiff, buildUtmTiff, surveyDepth as depthOf } from './surveys.mjs';
+import { buildTiff, buildUtmTiff, buildAlbersTiff, surveyDepth as depthOf } from './surveys.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** The chart library is a plain browser script: run it here to get the same tile numbering. */
@@ -182,7 +182,9 @@ export async function writeFixtures(dir) {
   writeFileSync(files.pmtiles, chart.bytes);
   writeFileSync(files.tiff, tiff);
   writeFileSync(files.utm, utm.bytes);
-  // What the tests' stand-in for the seabed depth service sends back.
+  // What the tests' stand-ins for the two depth services send back.
   writeFileSync(path.join(dir, 'seabed-service'), tiff);
-  return { ...files, tiles: chart.tiles, utmProbe: utm.probe };
+  const albers = await buildAlbersTiff(AREA);
+  writeFileSync(path.join(dir, 'high-detail-service'), albers.bytes);
+  return { ...files, tiles: chart.tiles, utmProbe: utm.probe, albersProbe: albers.probe, albersMiddle: albers.middle };
 }

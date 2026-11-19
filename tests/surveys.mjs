@@ -71,7 +71,7 @@ function writeTiff(values, width, height, geo, noData) {
 }
 
 /** Reads a test survey back with the app's own library and checks a few cells. */
-async function checkTiff(bytes, width, expected) {
+async function checkTiff(bytes, width, expected, noData = -9999) {
   // The library names Worker as it loads, which Node lacks.
   globalThis.Worker ??= class {};
   const GeoTIFF = browserScript('vendor/geotiff.js', 'GeoTIFF');
@@ -81,7 +81,7 @@ async function checkTiff(bytes, width, expected) {
     const read = data[row * width + col];
     if (Math.abs(read - value) > 1e-3) throw new Error(`the test survey reads ${read} at row ${row}, column ${col}, not ${value}`);
   }
-  if (image.getGDALNoData() !== -9999) throw new Error('the test survey lost its no-data value');
+  if (Math.abs(image.getGDALNoData() - noData) > Math.abs(noData) * 1e-6) throw new Error('the test survey lost its no-data value');
   return image.getBoundingBox();
 }
 
@@ -131,4 +131,37 @@ export async function buildUtmTiff(area) {
   const easting = west + 240.5 * UTM.cell;
   const [lng, lat] = toUtm.inverse([easting, north - 180.5 * UTM.cell]);
   return { bytes, probe: { lng, lat, depth: utmDepth(easting, west) } };
+}
+
+
+/** GDA2020 Australian Albers (EPSG:9473): the grid the IMAS composite is held in. */
+const ALBERS = '+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs';
+/** What IMAS's server marks an empty cell with. */
+const IMAS_EMPTY = 3.3999999521443642e38;
+
+/**
+ * A stand-in for what IMAS's server sends for a high-detail request: depths in Australian
+ * Albers, 8 m at the west edge and 1 m deeper every kilometre east, with a patch of empty
+ * cells. Answers with the file, and a place inside it with the depth there.
+ */
+export async function buildAlbersTiff(area) {
+  const proj4 = browserScript('vendor/proj4.js', 'proj4');
+  const toAlbers = proj4('EPSG:4326', ALBERS);
+  const cell = 50;
+  const corners = [[area.west, area.south], [area.east, area.south], [area.west, area.north], [area.east, area.north]].map((p) => toAlbers.forward(p));
+  const west = Math.floor(Math.min(...corners.map((c) => c[0])) / cell) * cell;
+  const north = Math.ceil(Math.max(...corners.map((c) => c[1])) / cell) * cell;
+  const width = Math.ceil((Math.max(...corners.map((c) => c[0])) - west) / cell);
+  const height = Math.ceil((north - Math.min(...corners.map((c) => c[1]))) / cell);
+  const depthAt = (easting) => -(8 + (easting - west) / 1000);
+  const values = new Float32Array(width * height);
+  for (let r = 0; r < height; r++) {
+    for (let c = 0; c < width; c++) values[r * width + c] = r < 30 && c < 30 ? IMAS_EMPTY : depthAt(west + (c + 0.5) * cell);
+  }
+  const bytes = writeTiff(values, width, height, { scale: [cell, cell], origin: [west, north], keys: [1024, 0, 1, 1, 1025, 0, 1, 1, 3072, 0, 1, 9473] }, '3.3999999521443642E38');
+  await checkTiff(bytes, width, [[100, 100, depthAt(west + 100.5 * cell)], [height - 1, width - 1, depthAt(west + (width - 0.5) * cell)]], IMAS_EMPTY);
+  const col = Math.floor(width * 0.55);
+  const row = Math.floor(height * 0.5);
+  const [lng, lat] = toAlbers.inverse([west + (col + 0.5) * cell, north - (row + 0.5) * cell]);
+  return { bytes, probe: { lng, lat, depth: depthAt(west + (col + 0.5) * cell) }, middle: toAlbers.forward([(area.west + area.east) / 2, (area.south + area.north) / 2]) };
 }
