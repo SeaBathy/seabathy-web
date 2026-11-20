@@ -92,7 +92,8 @@ label.inline { display: flex; align-items: center; gap: 6px; color: var(--muted)
 
 .label-3d { color: #fff; font-size: 12px; font-weight: 600; padding: 2px 6px; border-radius: 4px;
   background: rgba(0,0,0,.55); border-left: 3px solid var(--c, #ef4444); white-space: nowrap; transform: translateY(-14px); }
-.boat-label { border-left-color: #ff8a00; }
+/* The boat's label sits above its marker on the screen, so it never covers it, even looking straight down. */
+.boat-label { border-left-color: #ff8a00; margin-top: -30px; }
 
 /* Waypoint pins: a 0x0 anchor on the seabed point, the flag drawn above it. */
 .wpt-pin { width: 0; height: 0; }

@@ -736,7 +736,7 @@ await step('A download that fails says why: a server that does not answer is not
   return 'no answer: "did not answer, your internet may be fine"; a 404: "answered 404"';
 });
 
-await step('3D: the seabed opens in 3D; height, a depth band, colours and a waypoint all work', async () => {
+await step('3D: the seabed opens in 3D; height, a depth band, colours, the boat and a waypoint all work', async () => {
   await closeSheet(page);
   // The whole survey on screen and the chart at rest, so 3D opens on all of it.
   await goTo(page, MID.lng, MID.lat, 9.6);
@@ -818,6 +818,41 @@ await step('3D: the seabed opens in 3D; height, a depth band, colours and a wayp
   await frame.locator('#readout-close').click();
   expect(await ballAt() === null, 'the ball stayed after the readout was closed');
 
+  // The boat: the 3D view's Boat button turns the GPS on, and the boat shows on the water with the depth under it and a line down to the seabed.
+  const boat = () => inside((w, d) => {
+    const label = d.querySelector('.boat-label');
+    const chip = d.querySelector('#boat-chip');
+    return { ...(w.__terrainTest.boat() || {}), label: label && label.style.display !== 'none' ? label.textContent : null, chip: chip.hidden ? null : chip.textContent };
+  });
+  const boatShown = async (tries = 150) => {
+    let seen = await boat();
+    for (let i = 0; i < tries && !(seen.label && seen.radius); i++) {
+      await page.waitForTimeout(100);
+      seen = await boat();
+    }
+    return seen;
+  };
+  // The ring is drawn 14 px from the boat's middle: it must be seen, and must not fill the screen.
+  const ringFits = (seen) => seen.radius > 11 && seen.radius < 18;
+  expect((await boat()).label === null, 'a boat shows in 3D with the GPS off');
+  await inside((w, d) => d.querySelector('#btn-boat').click());
+  let afloat = await boatShown();
+  expect(/^You · [0-9.]+ m deep$/.test(afloat.label || '') && /m deep/.test(afloat.chip || ''), `with the GPS on over the survey, 3D says ${JSON.stringify(afloat)}`);
+  expect(ringFits(afloat), `with the whole survey in view, the boat's ring reaches ${afloat.radius} px from its middle`);
+  expect(afloat.line > 0, 'no line runs from the boat down to the seabed');
+  await shot(page, '8d-3d-boat');
+  // The Boat button again brings the boat to the middle; a double tap beside it flies in, and the boat is still the same size.
+  await inside((w, d) => d.querySelector('#btn-boat').click());
+  await page.waitForTimeout(500);
+  const middle = await boat();
+  await page.mouse.dblclick(view.x + middle.x, view.y + middle.y + 18);
+  await page.waitForTimeout(1500);
+  const near = await boat();
+  expect(near.distance < middle.distance * 0.9, `a double tap did not fly in: ${middle.distance} then ${near.distance}`);
+  expect(ringFits(near), `closer in, the boat's ring reaches ${near.radius} px from its middle`);
+  await shot(page, '8e-3d-boat-near');
+  if (await inside((w, d) => !d.querySelector('#readout').hidden)) await frame.locator('#readout-close').click();
+
   // A waypoint dropped on the seabed arrives in the app, with its depth.
   await frame.locator('#btn-wpt-mode').click();
   await frame.locator('#view canvas').click({ position: { x: 190, y: 190 } });
@@ -828,6 +863,18 @@ await step('3D: the seabed opens in 3D; height, a depth band, colours and a wayp
   expect(first.partial === false, 'with the whole survey on screen, 3D opened on only part of it');
   await frame.locator('#btn-close').click();
   await page.waitForFunction(() => !document.querySelector('#view3d') && !window.SeaBathy3D, null, { timeout: 10000 });
+  // With the GPS on already, the boat is there as soon as 3D opens: it does not wait for the phone's next report.
+  await page.click('#btn-3d');
+  await ready();
+  afloat = await boatShown(30);
+  expect(/^You · [0-9.]+ m deep$/.test(afloat.label || '') && ringFits(afloat), `opened with the GPS on, 3D shows ${JSON.stringify(afloat)}`);
+  await frame.locator('#btn-close').click();
+  await page.waitForFunction(() => !document.querySelector('#view3d') && !window.SeaBathy3D, null, { timeout: 10000 });
+  await page.click('#btn-gps');
+  if (await page.locator('#gps-hud').isVisible()) await page.click('#btn-gps');
+  expect(await page.locator('#gps-hud').isHidden(), 'the GPS did not turn off after the 3D view');
+  // The chart followed the boat: back to where this check began, for the checks that follow.
+  await goTo(page, MID.lng, MID.lat, 9.6);
   // Tidied away for the checks that follow: the waypoint, then the depths.
   await openLayers(page);
   await page.locator('#wpt-list .wrow-edit').first().click();

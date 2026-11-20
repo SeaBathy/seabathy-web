@@ -250,7 +250,11 @@ function bridge() {
     drapeTile,
     units: () => JSON.stringify({ depthPerM: depthUnit().perMetre, depthLabel: depthUnit().label, speedPerKnot: speedUnit().perKnot, speedLabel: speedUnit().label }),
     close,
-    ready() {},
+    // The seabed is drawn. With the GPS on already, the boat goes on it now: waiting for the
+    // phone's next report left 3D without a boat, and at anchor that report can be a while coming.
+    ready() {
+      if (gps.isOn() && gps.lastFix()) sendFix(gps.lastFix());
+    },
     log() {},
     noWebGL() {
       close();

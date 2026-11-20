@@ -5,7 +5,7 @@ import { setting } from './db.js';
 import * as updates from './updates.js';
 import { add, button, card, closeSheet, confirmCard, el, openSheet, refreshSheet, topSheet, heading, note, row, toast, toggle } from './ui.js';
 
-export const VERSION = '0.3.6';
+export const VERSION = '0.3.7';
 /** Raise when the wording changes in a way people should agree to again. */
 const TERMS_VERSION = 1;
 const TERMS_URL = 'https://seabathy.com/terms';

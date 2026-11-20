@@ -897,6 +897,8 @@ window.__terrainTest = {
     return hit && { depth: hit.depth };
   },
   frames: () => terrain.renderCount,
+  // The boat's marker on the screen, or null when there is none.
+  boat: () => terrain.boatOnScreen(),
   // Where the ball for the last tap is on the screen, or null when there is none.
   tapMark: () => {
     const mark = document.querySelector('.tap-mark');
