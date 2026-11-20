@@ -582,7 +582,7 @@ function setWaypointMode(on) {
   $('btn-wpt-mode').setAttribute('aria-pressed', String(on));
   if (on) {
     setProfileMode(false);
-    toast('Tap the seabed to drop waypoints. Tap 📍 again when done.');
+    toast('Tap the seabed to drop waypoints. Tap Waypoint again when done.');
   }
 }
 $('btn-wpt-mode').addEventListener('click', () => setWaypointMode(!waypointMode));
@@ -764,7 +764,7 @@ window.updateBoat = (fix) => {
   const speed = fix.knots === null || fix.knots === undefined ? '' : ` · ${round1(fix.knots * units.speedPerKnot)} ${units.speedLabel}`;
   if (!inside) {
     terrain.setBoat(null);
-    $('boat-chip').innerHTML = `<b>⛵</b> outside this area${speed}`;
+    $('boat-chip').innerHTML = `<b>Boat</b> outside this area${speed}`;
   } else {
     // Null inside the area means either a survey gap or a depth hidden by Isolate.
     const missing = model.isolated ? 'depth outside the shown range' : 'no depth data here';
@@ -772,7 +772,7 @@ window.updateBoat = (fix) => {
     // positive depth, ground above the water line as drying.
     const depth = below === null ? missing : below < 0 ? `${depthUnits(-below)} deep` : `dries ${depthUnits(below)}`;
     terrain.setBoat({ col: g.col, row: g.row, heading: fix.heading, label: below === null ? 'You' : `You · ${depth}` });
-    $('boat-chip').innerHTML = `<b>⛵ ${depth}</b>${speed}`;
+    $('boat-chip').innerHTML = `<b>Boat · ${depth}</b>${speed}`;
   }
   $('boat-chip').hidden = false;
 };

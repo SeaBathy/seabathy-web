@@ -161,7 +161,7 @@ export function openMenu() {
       el('div', { class: 'drawer-label', text: 'Map layers' }),
       satelliteCard(),
       layers.length ? layers.map(layerCard) : el('div', { class: 'drawer-empty', id: 'layers-empty', text: 'No depth layers loaded yet' }),
-      el('button', { class: 'drawer-link', type: 'button', id: 'menu-seabed', text: '＋  Get seabed depths', onclick: () => seabed.show(map) }),
+      el('button', { class: 'drawer-link', type: 'button', id: 'menu-seabed', text: '+ Get seabed depths', onclick: () => seabed.show(map) }),
       el('div', { class: 'drawer-label', text: 'Waypoints' }),
       waypoints.drawerSection());
     add(foot, el('div', { class: 'drawer-label', text: 'Basemap' }), pick);

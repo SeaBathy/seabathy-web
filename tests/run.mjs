@@ -1264,7 +1264,7 @@ await step('Photos: a waypoint made where a photo was taken, photos added to a w
   // A photo that doesn't say where it was taken: nothing is made on Cancel; "At the crosshair" puts it there.
   await goTo(page, MID.lng, MID.lat, 11);
   await openLayers(page);
-  expect(/Bommie photo\s+📷/.test(await page.locator('#wpt-list').innerText()), 'the list does not mark the waypoint that has a photo');
+  expect(await page.locator('#wpt-list .wrow', { hasText: 'Bommie photo' }).locator('.wrow-photo').count() === 1 && await page.locator('#wpt-list .wrow-photo').count() === 1, 'the list does not mark the waypoint that has a photo, and only that one');
   await page.setInputFiles('#wpt-photo-pick', plain);
   await page.waitForSelector('#photo-here');
   expect(/No location in this photo/.test(await page.locator('.overlay .card').innerText()), 'a photo with no place in it was not explained');
@@ -1782,7 +1782,7 @@ await step('The Layers panel: Settings, every layer with its switch, slider and 
   await page.waitForSelector('#drawer:not([hidden])');
   const all = await charts(page);
   const said = await page.locator('#drawer').innerText();
-  expect(/Layers/.test(said) && /Settings/.test(said) && /Map layers/.test(said) && /Satellite picture/.test(said) && /Waypoints/.test(said) && /Basemap/.test(said), `the Layers panel is missing a part: ${said.replace(/\s+/g, ' ').slice(0, 200)}`);
+  expect(/Layers/i.test(said) && /Settings/.test(said) && /Map layers/i.test(said) && /Satellite picture/.test(said) && /Waypoints/i.test(said) && /Basemap/i.test(said), `the Layers panel is missing a part: ${said.replace(/\s+/g, ' ').slice(0, 200)}`);
   for (const c of all) expect(said.includes(c.name), `the Layers panel does not list ${c.name}`);
   expect(await page.locator('#sheet').isHidden(), 'a panel is open over the Layers panel');
   await shot(page, '7e-drawer');

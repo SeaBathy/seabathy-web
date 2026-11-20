@@ -118,6 +118,9 @@ export async function addQuiet(lng, lat, desc = '') {
 
 // ---------------------------------------------------------------- photos
 
+/** A small camera, drawn in whatever colour the words beside it are. */
+const CAMERA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3.2l1.5-2.2h6.6L16.8 8H20v11H4z"/><circle cx="12" cy="13.2" r="3.4"/></svg>';
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const two = (n) => String(n).padStart(2, '0');
@@ -184,7 +187,7 @@ function photoSection(waypoint) {
     heading('PHOTOS'),
     waypoint.photos?.length ? strip : null,
     picker,
-    el('button', { class: 'btn photo-add', type: 'button', id: 'wpt-photo-add', text: '📷  Add a photo', 'aria-label': 'Take a photo of this waypoint, or pick one you have', onclick: () => picker.click() })
+    el('button', { class: 'btn photo-add', type: 'button', id: 'wpt-photo-add', 'aria-label': 'Take a photo of this waypoint, or pick one you have', onclick: () => picker.click() }, svg(CAMERA, 'btn-icon'), 'Add a photo')
   ];
 }
 
@@ -358,7 +361,7 @@ export function drawerSection() {
       ? shown.map((w) => el('div', { class: 'wrow', 'data-id': w.id },
         el('span', { class: 'wrow-dot', style: `--c:${w.color}` }),
         el('span', { class: 'wrow-text' },
-          el('span', { class: 'wrow-name', text: w.photos?.length ? `${w.name}  📷` : w.name }),
+          el('span', { class: 'wrow-name' }, w.name, w.photos?.length ? svg(CAMERA, 'wrow-photo') : null),
           el('span', { class: 'wrow-pos', text: units.positionText(w.lat, w.lng) })),
         mini('Go', () => {
           closeDrawer();
@@ -377,7 +380,7 @@ export function drawerSection() {
       if (file) fromPhoto(file);
     }
   });
-  const fromOne = el('button', { class: 'drawer-link', type: 'button', id: 'wpt-from-photo', text: '📷  Waypoint from a photo', 'aria-label': 'Make a waypoint where a photo was taken', onclick: () => picker.click() });
+  const fromOne = el('button', { class: 'drawer-link', type: 'button', id: 'wpt-from-photo', 'aria-label': 'Make a waypoint where a photo was taken', onclick: () => picker.click() }, svg(CAMERA, 'link-icon'), 'Waypoint from a photo');
   fill();
   return [fromOne, picker, search, results];
 }
