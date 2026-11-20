@@ -7,7 +7,8 @@ import * as offline from './offline.js';
 import * as files from './files.js';
 import * as waypoints from './waypoints.js';
 import { setting } from './db.js';
-import { PALETTES, drawLegend, normalised, MAX_HILLSHADE_EXAGGERATION } from './depth.js';
+import { PALETTES, drawLegend, normalised, MAX_HILLSHADE_EXAGGERATION, SLOPE_MAXES, DEFAULT_SLOPE_MAX, setShallowMark, getShallowMark } from './depth.js';
+import * as contours from './contours.js';
 import { add, el, toast, openSheet, refreshSheet, topSheet, backFrom, closeSheet, row, button, field, heading, note, toggle, slider, confirmCard, progressCard, holdScreenOn, card, openDrawer, closeDrawer, refreshDrawer, mini, chooser } from './ui.js';
 import { openAbout, openInstall, canInstall } from './install.js';
 import * as seabed from './seabed.js';
@@ -205,8 +206,26 @@ function openDisplay() {
   });
 }
 
+/** The depths offered for marking shallow water, in each depth unit. */
+const SHALLOWS = { m: [1, 2, 3, 5, 10, 20], ft: [3, 6, 10, 15, 30, 60], fm: [0.5, 1, 2, 3, 5, 10] };
+
+/** Picks the depth that water must be shallower than to be marked in red, or none. */
+function pickShallow() {
+  const unit = units.depthUnit();
+  const offered = SHALLOWS[units.state.depth] || SHALLOWS.m;
+  const now = getShallowMark();
+  const current = now > 0 ? String(offered.find((v) => Math.abs(v / unit.perMetre - now) < 0.02) ?? '') : 'off';
+  chooser('Mark shallow water in red', [['off', 'Off'], ...offered.map((v) => [String(v), `Shallower than ${v} ${unit.label}`])], current, async (id) => {
+    const metres = id === 'off' ? 0 : Number(id) / unit.perMetre;
+    setShallowMark(metres);
+    await setting.set('shallowMetres', metres);
+    charts.redrawDepths();
+  }, (id) => `shallow-${id}`);
+}
+
 function openBoat() {
   openSheet('Boat and navigation', (body) => {
+    const shallow = getShallowMark();
     const pick = (title, all, key) => () => chooser(title, Object.entries(all).map(([id, unit]) => [id, `${unit.name} (${unit.label})`]), units.state[key],
       (id) => units.set({ [key]: id }), (id) => `unit-${key}-${id}`);
     add(body,
@@ -214,6 +233,9 @@ function openBoat() {
       row('Depth', units.depthUnit().label, pick('Depth', units.DEPTHS, 'depth'), { id: 'boat-depth' }),
       row('Speed', units.speedUnit().label, pick('Speed', units.SPEEDS, 'speed'), { id: 'boat-speed' }),
       note("Depths are shown this way at the crosshair and in 3D. A layer's colour range is always set in metres. Distances are in nautical miles and bearings are true."),
+      heading('SHALLOW WATER'),
+      row('Mark shallow water in red', shallow > 0 ? `Shallower than ${Number((shallow * units.depthUnit().perMetre).toFixed(1))} ${units.depthUnit().label}` : 'Off', pickShallow, { id: 'boat-shallow' }),
+      note('Red stripes are drawn over water shallower than this, on your depth layers and in 3D. A guide only: the depths come from surveys and take no account of the tide.'),
       heading('ROUTES'),
       row('Saved routes', routes.list().length ? `${plural(routes.list().length, 'route')}: load, rename, export` : 'Load, rename, export', routes.openLibrary, { id: 'menu-routes' }),
       note('Plan a route with the route tool on the top bar. The cruise speed for its times is set on the route card.'));
@@ -425,11 +447,33 @@ function openChart(chart) {
       to.addEventListener('change', () => setRange(Number(from.value), Number(to.value)));
       const palette = el('select', { id: 'ramp-palette', onchange: () => { chart.ramp = { ...chart.ramp, paletteId: palette.value }; paint(); soon(); } },
         PALETTES.map((p) => el('option', { value: p.id, text: p.label, selected: p.id === ramp.paletteId })));
+      // A depth grid can be coloured by how steep the seabed is instead, as in the 3D view.
+      const bySlope = chart.view === 'depth' && ramp.colourBy === 'slope';
+      const colourBy = el('select', {
+        id: 'ramp-colour-by',
+        onchange: async () => {
+          chart.ramp = { ...chart.ramp, colourBy: colourBy.value };
+          await charts.restyle(chart);
+          refreshSheet();
+        }
+      }, [['depth', 'Depth'], ['slope', 'Slope (ledges and drop-offs)']].map(([value, text]) => el('option', { value, text, selected: (bySlope ? 'slope' : 'depth') === value })));
+      const steepText = (degrees) => `Blue is flat seabed; red is ${degrees}° or steeper.`;
+      const steepNote = note(steepText(ramp.slopeMax || DEFAULT_SLOPE_MAX));
+      const steep = el('select', {
+        id: 'ramp-slope-max',
+        onchange: () => {
+          chart.ramp = { ...chart.ramp, slopeMax: Number(steep.value) };
+          steepNote.textContent = steepText(steep.value);
+          soon();
+        }
+      }, SLOPE_MAXES.map(([value, text]) => el('option', { value: String(value), text, selected: value === (ramp.slopeMax || DEFAULT_SLOPE_MAX) })));
       paint();
       add(body,
         heading('DEPTH COLOURS'),
-        field('Palette', palette),
+        chart.view === 'depth' ? field('Colour by', colourBy) : null,
+        bySlope ? field('Red from', steep) : field('Palette', palette),
         legend,
+        bySlope ? steepNote : null,
         el('div', { class: 'pair' }, field('From depth (m)', from), field('To depth (m)', to)),
         row("Fit to this layer's depths", chart.view === 'vector' ? 'From the part now on screen' : null, () => {
           const fit = charts.fittedRange(chart);
@@ -437,7 +481,7 @@ function openChart(chart) {
           else setRange(-fit[0], -fit[1]);
         }, { id: 'ramp-fit' }),
         RANGES.map(([label, a, b]) => row(label, null, () => setRange(a, b))),
-        toggle('Reverse the colours', null, ramp.invert, (on) => { chart.ramp = { ...chart.ramp, invert: on }; paint(); soon(); }),
+        bySlope ? null : toggle('Reverse the colours', null, ramp.invert, (on) => { chart.ramp = { ...chart.ramp, invert: on }; paint(); soon(); }),
         toggle('Colour depths outside the range', 'Off: only the depths you picked are shown', ramp.showOutside, (on) => { chart.ramp = { ...chart.ramp, showOutside: on }; soon(); }));
       if (chart.view === 'depth') {
         add(body, slider('Relief shading', {
@@ -445,6 +489,22 @@ function openChart(chart) {
           onInput: (v) => { chart.ramp = { ...chart.ramp, hillshadeExaggeration: v }; soon(); }
         }));
       }
+    }
+
+    if (chart.kind === 'geotiff') {
+      const lines = contours.settingsOf(chart);
+      const setLines = async (change) => {
+        chart.contours = { ...contours.settingsOf(chart), ...change };
+        await charts.restyle(chart);
+        refreshSheet();
+      };
+      const every = el('select', { id: 'contour-every', onchange: () => setLines({ metres: every.value ? Number(every.value) : null }) },
+        el('option', { value: '', text: 'Auto: to suit the depths on screen', selected: lines.metres === null }),
+        contours.CHOICES.map((metres) => el('option', { value: String(metres), text: `${metres} m`, selected: lines.metres === metres })));
+      add(body,
+        heading('CONTOUR LINES'),
+        toggle('Contour lines', 'Lines of equal depth, with the depth written on them', lines.on, (on) => setLines({ on }), 'contour-on'),
+        lines.on ? field('A line every', every) : null);
     }
 
     if (chart.where === 'remote') add(body, heading('OFFLINE'), row('Save an area of it offline', 'For use with no signal', openOffline));

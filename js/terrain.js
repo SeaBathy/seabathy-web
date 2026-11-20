@@ -13,7 +13,7 @@ import * as gps from './gps.js';
 import * as db from './db.js';
 import * as files from './files.js';
 import { depthUnit, speedUnit } from './units.js';
-import { paletteById, normalised } from './depth.js';
+import { paletteById, normalised, getShallowMark } from './depth.js';
 import { el, toast, progressCard, holdScreenOn, closeSheet } from './ui.js';
 
 /** Drawing resolution at each "lighter" level, in screen pixels per CSS pixel. */
@@ -248,7 +248,7 @@ function bridge() {
     meta: async () => meta(),
     grid: async () => state.grid.values.buffer,
     drapeTile,
-    units: () => JSON.stringify({ depthPerM: depthUnit().perMetre, depthLabel: depthUnit().label, speedPerKnot: speedUnit().perKnot, speedLabel: speedUnit().label }),
+    units: () => JSON.stringify({ depthPerM: depthUnit().perMetre, depthLabel: depthUnit().label, speedPerKnot: speedUnit().perKnot, speedLabel: speedUnit().label, shallowMetres: getShallowMark() }),
     close,
     // The seabed is drawn. With the GPS on already, the boat goes on it now: waiting for the
     // phone's next report left 3D without a boat, and at anchor that report can be a while coming.

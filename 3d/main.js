@@ -111,7 +111,7 @@ const units = (() => {
   try {
     if (bridge.units) return JSON.parse(bridge.units());
   } catch (e) { /* fall through */ }
-  return { depthPerM: 1, depthLabel: 'm', speedPerKnot: 1, speedLabel: 'kn' };
+  return { depthPerM: 1, depthLabel: 'm', speedPerKnot: 1, speedLabel: 'kn', shallowMetres: 0 };
 })();
 /** A distance up or down, metres in, in the chosen depth unit. */
 const depthUnits = (metres) => `${round1(metres * units.depthPerM)} ${units.depthLabel}`;
@@ -263,6 +263,8 @@ function applyAll() {
   terrain.setFollowBoat(settings.followBoat);
   recolor();
   applyColorMode();
+  // Shallow water in red, at the depth picked in the app's Settings.
+  terrain.setShallow(units.shallowMetres || 0);
   updateContours();
   updateWaypoints();
 }
@@ -890,13 +892,17 @@ renderTabs();
 window.__terrainTest = {
   state: () => ({ cols: model?.cols, rows: model?.rows, min: model?.min, max: model?.max, exaggeration: settings.exaggeration,
     labels: document.querySelectorAll('.contour-label').length, isolated: model?.isolated || null, partial: model?.partial,
-    cell: model && Math.min(model.cellX, model.cellY) }),
+    cell: model && Math.min(model.cellX, model.cellY), shallow: terrain.uniforms.uShallow.value }),
   tapCentre: () => {
     const r = document.querySelector('#view canvas').getBoundingClientRect();
     const hit = terrain.pick(r.left + r.width / 2, r.top + r.height / 2);
     return hit && { depth: hit.depth };
   },
   frames: () => terrain.renderCount,
+  // The view as a picture (a PNG data address), drawn afresh.
+  picture: () => terrain.screenshot(),
+  // Marks water shallower than this many metres, as the app's setting does.
+  shallowTo: (metres) => terrain.setShallow(metres),
   // The boat's marker on the screen, or null when there is none.
   boat: () => terrain.boatOnScreen(),
   // Where the ball for the last tap is on the screen, or null when there is none.

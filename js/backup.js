@@ -13,7 +13,7 @@ import { saveFile } from './ui.js';
 export const FORMAT = 1;
 const APP = 'SeaBathy web app';
 /** The settings worth carrying to another device: choices, not this device's own state. */
-const SETTINGS = ['units', 'places', 'basemap', 'customUrl', 'customCredit', 'satellite', 'waypointNames', 'updates', 'cruiseKnots', 'night', 'crosshairDepth'];
+const SETTINGS = ['units', 'places', 'basemap', 'customUrl', 'customCredit', 'satellite', 'waypointNames', 'updates', 'cruiseKnots', 'night', 'crosshairDepth', 'shallowMetres'];
 
 export async function build(version) {
   const settings = {};

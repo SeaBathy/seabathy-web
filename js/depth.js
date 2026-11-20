@@ -15,6 +15,34 @@ export const PALETTES = [
 
 export const paletteById = (id) => PALETTES.find((p) => p.id === id) || PALETTES[0];
 
+/** Slope colours, as the 3D view's: flat (blue) through moderate (yellow) to steep (red). */
+export const SLOPE_PALETTE = { id: 'slope', label: 'Slope', stops: [0x173880, 0x149e9e, 0xf5d642, 0xf27321, 0xc7141a] };
+export const DEFAULT_SLOPE_MAX = 20;
+/** The angle drawn fully red, as the 3D view offers it. */
+export const SLOPE_MAXES = [[5, '5° (gentle seabeds)'], [10, '10°'], [20, '20°'], [35, '35°'], [60, '60° (cliffs only)']];
+
+/** Water shallower than the depth picked in Settings is marked in this red. */
+export const SHALLOW_RED = [229, 20, 30];
+const SHALLOW_EDGE = [255, 255, 255];
+
+/**
+ * The colour of the shallow-water stripes at a pixel, or null between them. They run on the
+ * slant: three pixels of red and one of white in every eight, so they show on any colour,
+ * red included. Eight divides a tile's width, so they run on from one tile to the next.
+ */
+export function shallowStripe(x, y) {
+  const at = (x + y) & 7;
+  return at < 3 ? SHALLOW_RED : at === 3 ? SHALLOW_EDGE : null;
+}
+let shallowMark = 0;
+
+/** Marks water shallower than [metres] with red stripes on every depth layer; 0 for none. */
+export function setShallowMark(metres) {
+  shallowMark = Number.isFinite(metres) && metres > 0 ? metres : 0;
+}
+
+export const getShallowMark = () => shallowMark;
+
 /** The palette at [position] (0 = shallow end, 1 = deep end), as [r, g, b]. */
 export function colorAt(palette, position) {
   const stops = palette.stops;
@@ -31,7 +59,7 @@ const lookups = new Map();
 
 function lookupTable(id) {
   if (lookups.has(id)) return lookups.get(id);
-  const palette = paletteById(id);
+  const palette = id === SLOPE_PALETTE.id ? SLOPE_PALETTE : paletteById(id);
   const table = new Uint8Array(LOOKUP_SIZE * 3);
   for (let i = 0; i < LOOKUP_SIZE; i++) table.set(colorAt(palette, i / (LOOKUP_SIZE - 1)), i * 3);
   lookups.set(id, table);
@@ -55,7 +83,10 @@ export function defaultRamp() {
     deepMetres: DEFAULT_DEEP_METRES,
     invert: false,
     showOutside: false,
-    hillshadeExaggeration: DEFAULT_HILLSHADE_EXAGGERATION
+    hillshadeExaggeration: DEFAULT_HILLSHADE_EXAGGERATION,
+    // 'depth', or 'slope': steep seabed in red up to slopeMax degrees, whatever its depth.
+    colourBy: 'depth',
+    slopeMax: DEFAULT_SLOPE_MAX
   };
 }
 
@@ -121,37 +152,83 @@ export function reliefShade(values, cols, rows, cellX, cellY, strength) {
   return out;
 }
 
-/** Depth colours for a grid (north-up rows), as RGBA bytes. */
-export function renderDepth(values, cols, rows, rampIn, { cellX, cellY, shade } = {}) {
-  const ramp = normalised(rampIn);
-  const lookup = lookupTable(ramp.paletteId);
-  const span = Math.max(MIN_SPAN_METRES, ramp.shallowMetres - ramp.deepMetres);
-  const light = shade === undefined ? reliefShade(values, cols, rows, cellX, cellY, ramp.hillshadeExaggeration) : shade;
-  const out = new Uint8ClampedArray(cols * rows * 4);
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
-    if (Number.isNaN(v)) continue;
-    let position = rampPosition(v, ramp, span);
-    if (position === null) continue;
-    if (ramp.invert) position = 1 - position;
-    const k = Math.min(LOOKUP_SIZE - 1, Math.max(0, Math.trunc(position * (LOOKUP_SIZE - 1)))) * 3;
-    const b = light ? light[i] : 1;
-    out[i * 4] = Math.min(255, Math.trunc(lookup[k] * b));
-    out[i * 4 + 1] = Math.min(255, Math.trunc(lookup[k + 1] * b));
-    out[i * 4 + 2] = Math.min(255, Math.trunc(lookup[k + 2] * b));
-    out[i * 4 + 3] = 255;
+/**
+ * The seabed's slope at each cell in degrees (0 flat, 90 a wall), from the cells either side of
+ * it. Cell sizes in metres. NaN where there is no depth.
+ */
+export function slopeDegrees(values, cols, rows, cellX, cellY) {
+  const out = new Float32Array(cols * rows).fill(NaN);
+  if (cols < 2 || rows < 2 || !(cellX > 0) || !(cellY > 0)) return out;
+  const has = (i) => values[i] === values[i];
+  for (let r = 0; r < rows; r++) {
+    const here = r * cols;
+    for (let c = 0; c < cols; c++) {
+      const i = here + c;
+      if (!has(i)) continue;
+      // The neighbour each side where there is one with a depth, else this cell itself.
+      const left = c > 0 && has(i - 1) ? i - 1 : i;
+      const right = c < cols - 1 && has(i + 1) ? i + 1 : i;
+      const up = r > 0 && has(i - cols) ? i - cols : i;
+      const down = r < rows - 1 && has(i + cols) ? i + cols : i;
+      const dzdx = right > left ? (values[right] - values[left]) / ((right - left) * cellX) : 0;
+      const dzdy = down > up ? (values[down] - values[up]) / (((down - up) / cols) * cellY) : 0;
+      out[i] = (Math.atan(Math.hypot(dzdx, dzdy)) * 180) / Math.PI;
+    }
   }
   return out;
 }
 
-/** The ramp's colours left to right (shallow to deep, or reversed), for a legend. */
+/**
+ * Colours for a grid of depths (north-up rows), as RGBA bytes: by depth, or by slope when the
+ * ramp says so. Water shallower than [shallow] metres gets red stripes over it, whatever the
+ * colours and the range.
+ */
+export function renderDepth(values, cols, rows, rampIn, { cellX, cellY, shade, shallow = shallowMark } = {}) {
+  const ramp = normalised(rampIn);
+  const bySlope = ramp.colourBy === 'slope' && cellX > 0 && cellY > 0;
+  const lookup = lookupTable(bySlope ? SLOPE_PALETTE.id : ramp.paletteId);
+  const slopes = bySlope ? slopeDegrees(values, cols, rows, cellX, cellY) : null;
+  const steepest = ramp.slopeMax > 0 ? ramp.slopeMax : DEFAULT_SLOPE_MAX;
+  const span = Math.max(MIN_SPAN_METRES, ramp.shallowMetres - ramp.deepMetres);
+  const light = shade === undefined ? reliefShade(values, cols, rows, cellX, cellY, ramp.hillshadeExaggeration) : shade;
+  const out = new Uint8ClampedArray(cols * rows * 4);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const i = r * cols + c;
+      const v = values[i];
+      if (Number.isNaN(v)) continue;
+      const stripe = shallow > 0 && v <= 0 && v > -shallow ? shallowStripe(c, r) : null;
+      if (stripe) {
+        out[i * 4] = stripe[0];
+        out[i * 4 + 1] = stripe[1];
+        out[i * 4 + 2] = stripe[2];
+        out[i * 4 + 3] = 255;
+        continue;
+      }
+      let position = rampPosition(v, ramp, span);
+      if (position === null) continue;
+      if (bySlope) position = Math.min(1, slopes[i] / steepest);
+      else if (ramp.invert) position = 1 - position;
+      const k = Math.min(LOOKUP_SIZE - 1, Math.max(0, Math.trunc(position * (LOOKUP_SIZE - 1)))) * 3;
+      const b = light ? light[i] : 1;
+      out[i * 4] = Math.min(255, Math.trunc(lookup[k] * b));
+      out[i * 4 + 1] = Math.min(255, Math.trunc(lookup[k + 1] * b));
+      out[i * 4 + 2] = Math.min(255, Math.trunc(lookup[k + 2] * b));
+      out[i * 4 + 3] = 255;
+    }
+  }
+  return out;
+}
+
+/** The ramp's colours left to right (shallow to deep, or reversed; flat to steep for slope), for a legend. */
 export function drawLegend(canvas, rampIn) {
   const ramp = normalised(rampIn);
-  const palette = paletteById(ramp.paletteId);
+  const bySlope = ramp.colourBy === 'slope';
+  const palette = bySlope ? SLOPE_PALETTE : paletteById(ramp.paletteId);
   const ctx = canvas.getContext('2d');
   for (let x = 0; x < canvas.width; x++) {
     let position = x / Math.max(1, canvas.width - 1);
-    if (ramp.invert) position = 1 - position;
+    if (ramp.invert && !bySlope) position = 1 - position;
     const [r, g, b] = colorAt(palette, position);
     ctx.fillStyle = `rgb(${r},${g},${b})`;
     ctx.fillRect(x, 0, 1, canvas.height);

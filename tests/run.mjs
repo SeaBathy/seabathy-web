@@ -501,6 +501,179 @@ await step('A GeoTIFF in a UTM projection is placed and read correctly, then del
   return `${info.crs}; depth ${info.depth.toFixed(2)} m where ${probe.depth.toFixed(2)} m was written; zooms in to ${info.maxZoom}`;
 });
 
+await step('Depth layers: slope colours, contour lines with their depths, and shallow water marked in red', async () => {
+  await closeSheet(page);
+  await goTo(page, MID.lng, MID.lat, 11);
+  const id = (await charts(page)).find((c) => c.kind === 'geotiff').id;
+  const ramp = () => page.evaluate((chart) => window.seabathy.charts.byId(chart).ramp, id);
+  // A tile of the survey as it is drawn: its middle pixel, and how many of its pixels are the stripes' red and white.
+  const tile = (lng) => page.evaluate(new Function('place', `return (async ([lng, lat, id]) => {
+    const s = window.seabathy;
+    const [x, y] = (${tileOf})(lng, lat, 11);
+    const picture = await s.survey.renderTile(s.charts.byId(id), 11, x, y);
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const context2d = canvas.getContext('2d');
+    context2d.drawImage(picture, 0, 0);
+    const data = context2d.getImageData(0, 0, 256, 256).data;
+    let red = 0;
+    let white = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] === 229 && data[i + 1] === 20 && data[i + 2] === 30) red++;
+      else if (data[i] === 255 && data[i + 1] === 255 && data[i + 2] === 255) white++;
+    }
+    const middle = (128 * 256 + 128) * 4;
+    return { middle: [data[middle], data[middle + 1], data[middle + 2], data[middle + 3]], red, white };
+  })(place)`), [lng, MID.lat, id]);
+  const near = (a, b, by = 5) => a.every((v, i) => Math.abs(v - b[i]) <= by);
+
+  // Slope colours, on a made-up seabed of 10 m cells: flat, then 10 degrees, then 45.
+  const made = await page.evaluate(() => {
+    const { depth } = window.seabathy;
+    const cols = 30;
+    const rows = 6;
+    const values = new Float32Array(cols * rows);
+    const drop = [0, Math.tan((10 * Math.PI) / 180) * 10, 10];
+    for (let r = 0; r < rows; r++) {
+      let z = -50;
+      for (let c = 0; c < cols; c++) {
+        values[r * cols + c] = z;
+        z -= drop[Math.floor(c / 10)];
+      }
+    }
+    const ramp = { ...depth.defaultRamp(), shallowMetres: 0, deepMetres: -1000, colourBy: 'slope', slopeMax: 20, hillshadeExaggeration: 0 };
+    const pixels = depth.renderDepth(values, cols, rows, ramp, { cellX: 10, cellY: 10, shallow: 0 });
+    const slopes = depth.slopeDegrees(values, cols, rows, 10, 10);
+    const at = (c) => [...pixels.slice((3 * cols + c) * 4, (3 * cols + c) * 4 + 3)];
+    return { flat: at(4), mid: at(15), steep: at(25), degrees: [4, 15, 25].map((c) => slopes[3 * cols + c]) };
+  });
+  expect(Math.abs(made.degrees[0]) < 0.01 && Math.abs(made.degrees[1] - 10) < 0.05 && Math.abs(made.degrees[2] - 45) < 0.05, `the slopes were worked out as ${made.degrees}`);
+  expect(near(made.flat, [23, 56, 128]) && near(made.mid, [245, 214, 66]) && near(made.steep, [199, 20, 26]), `flat, 10 degrees and 45 degrees were coloured ${JSON.stringify(made)}`);
+
+  // On the chart: the layer's own panel offers it, and the survey (a gentle slope) turns the blue of flat seabed.
+  const byDepth = await tile(MID.lng);
+  await openLayer(page, 'test-survey');
+  expect(await page.locator('#ramp-palette').isVisible() && await page.locator('#ramp-slope-max').count() === 0, 'the slope angle is offered before slope colours are chosen');
+  await page.selectOption('#ramp-colour-by', 'slope');
+  await page.waitForFunction((chart) => window.seabathy.charts.byId(chart).ramp.colourBy === 'slope' && document.querySelector('#ramp-slope-max'), id);
+  expect(await page.locator('#ramp-palette').count() === 0 && /red is 20° or steeper/.test(await page.locator('#sheet-body').innerText()), 'the panel does not explain the slope colours');
+  await page.selectOption('#ramp-slope-max', '5');
+  await page.waitForFunction((chart) => window.seabathy.charts.byId(chart).ramp.slopeMax === 5 && /red is 5° or steeper/.test(document.querySelector('#sheet-body').innerText), id, { timeout: 10000 });
+  const bySlope = await tile(MID.lng);
+  expect(bySlope.middle[2] > 100 && bySlope.middle[0] < 60 && bySlope.middle[3] === 255 && !near(bySlope.middle, byDepth.middle, 30), `coloured by slope, the middle of the tile is ${bySlope.middle} (by depth it was ${byDepth.middle})`);
+  await shot(page, '4b-slope-panel');
+  await page.selectOption('#ramp-colour-by', 'depth');
+  await page.waitForFunction((chart) => window.seabathy.charts.byId(chart).ramp.colourBy === 'depth' && document.querySelector('#ramp-palette'), id);
+  expect(near((await tile(MID.lng)).middle, byDepth.middle, 1) && (await ramp()).slopeMax === 5, 'going back to depth colours did not bring them back as they were');
+
+  // Contour lines. First the working out, on a made-up cone that deepens 2 m a cell from its top.
+  const cone = await page.evaluate(() => {
+    const { contours } = window.seabathy;
+    const n = 41;
+    const values = new Float32Array(n * n);
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) values[r * n + c] = -Math.hypot(c - 20, r - 20) * 2;
+    const found = contours.trace(values, n, n, 10);
+    const ten = found.find((f) => f.level === -10);
+    const ring = ten.lines[0];
+    const radii = ring.map(([x, y]) => Math.hypot(x - 20, y - 20));
+    return {
+      levels: found.map((f) => f.level), rings: ten.lines.length, closed: ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1],
+      least: Math.min(...radii), most: Math.max(...radii), auto: contours.stepFor(-60, 0), wide: contours.stepFor(-3000, 0, 1),
+      feet: [contours.labelFor(-20, { perMetre: 3.28084, label: 'ft' }), contours.labelFor(-1, { perMetre: 3.28084, label: 'ft' }), contours.labelFor(-20, { perMetre: 1, label: 'm' })]
+    };
+  });
+  expect(cone.levels.join() === '-50,-40,-30,-20,-10,0' && cone.rings === 1 && cone.closed && cone.least > 4.7 && cone.most < 5.1, `the 10 m line round the cone: ${JSON.stringify(cone)}`);
+  expect(cone.auto === 5 && cone.wide === 50 && cone.feet.join('|') === '66 ft|3.3 ft|20 m', `intervals and labels: ${JSON.stringify(cone)}`);
+
+  // On the chart: switched on in the layer's panel, the lines are drawn where the survey has those depths.
+  expect(await page.locator('#contour-every').count() === 0, 'the interval is offered before contour lines are on');
+  await page.locator('#contour-on').check();
+  await page.waitForSelector('#contour-every');
+  await shot(page, '4c-contour-panel');
+  await closeSheet(page);
+  const lines = () => page.evaluate(async (chart) => {
+    const s = window.seabathy;
+    const data = s.contours.dataOf(chart);
+    if (!data || !data.features.length) return null;
+    const feature = data.features[Math.floor(data.features.length / 2)];
+    const [lng, lat] = feature.geometry.coordinates[Math.floor(feature.geometry.coordinates.length / 2)];
+    return {
+      count: data.features.length, step: data.step, labels: [...new Set(data.features.map((f) => f.properties.label))], depths: [...new Set(data.features.map((f) => f.properties.depth))],
+      line: feature.properties.depth, there: -(await s.survey.depthAt(s.charts.byId(chart), lng, lat)),
+      layers: [`contours-${chart}-line`, `contours-${chart}-label`].every((layer) => s.map.getLayer(layer)),
+      order: s.map.getStyle().layers.map((l) => l.id)
+    };
+  }, id);
+  await page.waitForFunction((chart) => window.seabathy.contours.dataOf(chart)?.features.length > 0, id, { timeout: 30000 });
+  const auto = await lines();
+  expect(auto.layers && auto.count >= 3 && [1, 2, 5, 10].includes(auto.step), `contour lines on: ${JSON.stringify({ ...auto, order: undefined })}`);
+  expect(auto.depths.every((d) => d >= 5 && d <= 65 && Math.abs(d / auto.step - Math.round(d / auto.step)) < 1e-6) && auto.labels.every((l) => /^\d+ m$/.test(l)), `the lines are at ${auto.depths} m, labelled ${auto.labels}`);
+  expect(Math.abs(auto.line - auto.there) < 0.5, `the ${auto.line} m line runs where the survey is ${auto.there} m deep`);
+  expect(auto.order.indexOf(`contours-${id}-line`) > auto.order.indexOf(`chart-${id}-raster`), 'the lines are under the depths they belong to');
+  await page.waitForTimeout(600);
+  await shot(page, '4d-contours');
+  // A line every 10 m, picked by hand.
+  await openLayer(page, 'test-survey');
+  await page.selectOption('#contour-every', '10');
+  await page.waitForFunction((chart) => window.seabathy.contours.dataOf(chart)?.step === 10, id, { timeout: 30000 });
+  const tens = await lines();
+  expect(tens.depths.length >= 2 && tens.depths.every((d) => d % 10 === 0), `every 10 m gave lines at ${tens.depths}`);
+  // The labels follow the depth unit chosen in Settings.
+  await setUnit(page, 'depth', 'ft');
+  await page.waitForFunction((chart) => window.seabathy.contours.dataOf(chart)?.features.every((f) => / ft$/.test(f.properties.label)), id, { timeout: 30000 });
+  expect((await lines()).labels.includes('98 ft'), `in feet the 30 m line is not labelled 98 ft: ${(await lines()).labels}`);
+  await setUnit(page, 'depth', 'm');
+  await page.waitForFunction((chart) => window.seabathy.contours.dataOf(chart)?.features.every((f) => / m$/.test(f.properties.label)), id, { timeout: 30000 });
+  // A hidden layer takes its lines with it; switched off, they go and the choice is remembered.
+  await closeSheet(page);
+  const linesShown = () => page.evaluate((chart) => Boolean(window.seabathy.map.getLayer(`contours-${chart}-line`)), id);
+  await page.evaluate(async (chart) => { const c = window.seabathy.charts.byId(chart); c.visible = false; await window.seabathy.charts.restyle(c, { save: false }); }, id);
+  expect(!(await linesShown()), 'a hidden layer left its contour lines on the chart');
+  await page.evaluate(async (chart) => { const c = window.seabathy.charts.byId(chart); c.visible = true; await window.seabathy.charts.restyle(c, { save: false }); }, id);
+  expect(await linesShown(), 'showing the layer again did not bring its contour lines back');
+  await openLayer(page, 'test-survey');
+  await page.locator('#contour-on').uncheck();
+  await page.waitForFunction((chart) => !window.seabathy.map.getLayer(`contours-${chart}-line`) && !window.seabathy.map.getSource(`contours-${chart}`) && !document.querySelector('#contour-every'), id);
+  expect(JSON.stringify(await page.evaluate((chart) => window.seabathy.charts.byId(chart).contours, id)) === '{"on":false,"metres":10}', 'switching the lines off did not keep the interval');
+  if (stores) expect((await page.evaluate(() => window.seabathy.db.all('charts'))).find((c) => c.id === id).contours.metres === 10, 'the contour settings were not saved with the layer');
+
+  // Shallow water in red: picked in Settings, striped on the survey where it is shallower, and off again.
+  const WEST = AREA.west + 0.02;
+  expect((await tile(WEST)).red === 0, 'there are red stripes before any depth is picked');
+  await openMenu(page, 'menu-boat');
+  expect(/Off/.test(await page.locator('#boat-shallow').innerText()), 'shallow water is marked before it is asked for');
+  await page.click('#boat-shallow');
+  await page.click('#shallow-20');
+  await page.waitForFunction(() => /Shallower than 20 m/.test(document.querySelector('#boat-shallow')?.innerText || ''));
+  expect(await page.evaluate(() => window.seabathy.depth.getShallowMark() === 20 && window.seabathy.db.setting.get('shallowMetres')) === 20, 'the depth picked was not kept');
+  await shot(page, '4e-shallow-setting');
+  await closeSheet(page);
+  // West of the middle the survey is 5 to 20 m: stripes there, and none where it is 30 m and more.
+  const shallow = await tile(WEST);
+  const deep = await tile(MID.lng);
+  expect(shallow.red > 5000 && shallow.white > 1500 && shallow.red < 3.5 * shallow.white, `the shallow tile has ${shallow.red} red and ${shallow.white} white pixels`);
+  expect(deep.red === 0 && near(deep.middle, byDepth.middle, 1), `the tile over ${surveyDepth(MID.lng)} m has ${deep.red} red pixels`);
+  // A chart of depth shapes is marked the same way, with a pattern over its shallow shapes.
+  const shapes = await page.evaluate(() => {
+    const s = window.seabathy;
+    const layers = s.map.getStyle().layers.filter((l) => /-shallow-\d+$/.test(l.id));
+    return { layers: layers.length, pattern: layers[0]?.paint['fill-pattern'], picture: s.map.hasImage('sb-shallow') };
+  });
+  expect(shapes.layers >= 1 && shapes.pattern === 'sb-shallow' && shapes.picture, `the depth shapes are marked with ${JSON.stringify(shapes)}`);
+  await goTo(page, WEST + 0.03, MID.lat, 11);
+  await page.waitForTimeout(800);
+  await shot(page, '4f-shallow');
+  await openMenu(page, 'menu-boat');
+  await page.click('#boat-shallow');
+  await page.click('#shallow-off');
+  await page.waitForFunction(() => /Off/.test(document.querySelector('#boat-shallow')?.innerText || ''));
+  await closeSheet(page);
+  expect((await tile(WEST)).red === 0 && await page.evaluate(() => !window.seabathy.map.getStyle().layers.some((l) => /-shallow-\d+$/.test(l.id))), 'switched off, the red stripes stayed');
+  await goTo(page, MID.lng, MID.lat, 11);
+  return `slope ${made.degrees.map((v) => v.toFixed(0)).join('°, ')}°; ${auto.count} lines every ${auto.step} m, then every 10 m; ${shallow.red} red pixels where it is shallower than 20 m`;
+});
+
 await step('Choosing the area: it starts empty, a finger draws the box, moves it and resizes it, and nothing downloads until asked', async () => {
   await page.evaluate((url) => window.seabathy.seabed.useServer(url), `${DATA}seabed-service`);
   const requests = () => page.evaluate((prefix) => performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.startsWith(prefix)), `${DATA}seabed-service`);
@@ -740,6 +913,8 @@ await step('3D: the seabed opens in 3D; height, a depth band, colours, the boat 
   await closeSheet(page);
   // The whole survey on screen and the chart at rest, so 3D opens on all of it.
   await goTo(page, MID.lng, MID.lat, 9.6);
+  // Water shallower than 40 m is to be marked in red: the 3D view takes that from the app when it opens.
+  await page.evaluate(() => window.seabathy.depth.setShallowMark(40));
   await page.click('#btn-3d');
   const inside = (work, arg) => page.evaluate(([code, value]) => {
     const w = document.querySelector('#view3d').contentWindow;
@@ -758,6 +933,35 @@ await step('3D: the seabed opens in 3D; height, a depth band, colours, the boat 
   expect(first.tap && first.tap.depth <= first.max && first.tap.depth >= first.min, `a tap in the middle read ${JSON.stringify(first.tap)}`);
   expect(first.palette === 'chart', 'it did not open with the chart\'s own colours');
   const credit3d = await inside((w, d) => (d.querySelector('#map-credit').hidden ? '' : d.querySelector('#map-credit').textContent));
+  // Shallow water has red stripes over it: the picture changes where the seabed is above 40 m, and
+  // not at all for a depth shallower than the whole survey.
+  expect(first.shallow === 40, `3D opened marking water shallower than ${first.shallow} m, not 40 m`);
+  await shot(page, '8-3d-shallow');
+  const striped = await inside(async (w, d) => {
+    const pixels = async () => {
+      const image = new w.Image();
+      await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = w.__terrainTest.picture(); });
+      const canvas = d.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context2d = canvas.getContext('2d');
+      context2d.drawImage(image, 0, 0);
+      return context2d.getImageData(0, 0, image.width, image.height).data;
+    };
+    const changed = (a, b) => {
+      let count = 0;
+      for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 60) count++;
+      return count;
+    };
+    const marked = await pixels();
+    w.__terrainTest.shallowTo(1);
+    const tooShallow = await pixels();
+    w.__terrainTest.shallowTo(0);
+    const plain = await pixels();
+    return { stripes: changed(marked, plain), none: changed(tooShallow, plain) };
+  });
+  expect(striped.stripes > 300 && striped.none < 30, `the stripes changed ${striped.stripes} pixels of the 3D picture, and ${striped.none} for a depth shallower than the survey`);
+  await page.evaluate(() => { window.seabathy.depth.setShallowMark(0); window.seabathy.charts.redrawDepths(); });
   expect(credit3d.includes('GMRT'), `the depths' credit is not on the 3D view: "${credit3d}"`);
   await shot(page, '8-3d');
 

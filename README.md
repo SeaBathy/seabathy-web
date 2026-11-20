@@ -1,7 +1,7 @@
 # SeaBathy web app
 
 ![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
-![Version 0.3.7](https://img.shields.io/badge/version-0.3.7-informational)
+![Version 0.3.8](https://img.shields.io/badge/version-0.3.8-informational)
 ![Works offline](https://img.shields.io/badge/works-offline-success)
 ![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
 
@@ -185,6 +185,16 @@ signal the chart is your depths and saved satellite on a plain background.
   (reef, inshore, coastal, offshore) and relief shading. The depth at the crosshair.
 
   <img src="screenshots/depth-colours.jpg" alt="Depth colours" width="300">
+- **Contour lines** on a depth layer, with the depth written along them: a line every 1 to
+  100 m, or left to suit the depths on screen (Layers panel → **Colours** → Contour lines).
+  The labels follow your depth unit.
+- **Slope colours:** a depth layer coloured by how steep the seabed is instead of how deep, so
+  ledges and drop-offs stand out: blue for flat, red for steep (**Colours** → Colour by).
+- **Shallow water in red:** pick a depth, say 3 m, and water shallower than that gets red
+  stripes on every depth layer and in 3D (Settings → Boat and navigation). A guide only: the
+  depths come from surveys and take no account of the tide.
+
+  <img src="screenshots/contours.jpg" alt="Contour lines with their depths, and red stripes over water shallower than 10 m" width="300"> <img src="screenshots/slope.jpg" alt="The same seabed coloured by slope" width="300">
 - **Basemaps:** dark, street map, OpenStreetMap, OpenTopoMap, USGS imagery, your own tile link
   with its credit, or none.
 - **Satellite picture** over the chart with an opacity slider, and savable for offline use.
@@ -308,8 +318,8 @@ npm test
 
 `npm test` serves the app over HTTPS on this computer and drives it in WebKit (Safari's
 engine) set up as an iPhone: first start, offline reload, drawing the download area by finger,
-both depth downloads, the 3D view,
-GeoTIFF surveys, a PMTiles chart, waypoints, GPX, GPS, a web chart, saving an area, a restart,
+both depth downloads, the 3D view with the boat in it,
+GeoTIFF surveys, slope colours, contour lines, shallow water in red, a PMTiles chart, waypoints, GPX, GPS, a web chart, saving an area, a restart,
 hiding a layer, marine park zones with the no-take warning, names and ramps, units,
 deleting a layer, the licence texts, and an update taken both ways (after a tap, and by itself
 at the next start). `ENGINE=chromium npm test` runs the same steps in Chromium. `npm run

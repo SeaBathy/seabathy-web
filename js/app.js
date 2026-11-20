@@ -20,6 +20,9 @@ import * as units from './units.js';
 import * as tools from './tools.js';
 import * as routes from './routes.js';
 import * as marks from './marks.js';
+import * as depth from './depth.js';
+import * as contours from './contours.js';
+import * as survey from './survey.js';
 import { $, card, toast, wireSheet, sheetIsOpen, drawerIsOpen } from './ui.js';
 
 const HOLD_MS = 600;
@@ -133,6 +136,8 @@ async function boot() {
 
   await offline.start();
   await units.start();
+  // Water shallower than this is marked in red on every depth layer and in 3D.
+  depth.setShallowMark(await db.setting.get('shallowMetres', 0));
   // The 3D button comes and goes with the depth surveys on screen.
   let view3d = null;
   await charts.start(map, {
@@ -177,7 +182,7 @@ async function boot() {
   });
 
   // For the tests, and for looking into a problem from the browser's console.
-  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, places, units, tools, routes, marks, version: install.VERSION };
+  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, places, units, tools, routes, marks, depth, contours, survey, version: install.VERSION };
   document.body.classList.add('ready');
   sessionStorage.removeItem('startTries');
 

@@ -8,12 +8,14 @@ import * as files from './files.js';
 import * as survey from './survey.js';
 import * as offline from './offline.js';
 import { handle, address, tileLat, metresPerPixel } from './tiles.js';
-import { paletteById, colorAt, normalised, defaultRamp, renderDepth, MIN_SPAN_METRES } from './depth.js';
+import { paletteById, colorAt, normalised, defaultRamp, renderDepth, MIN_SPAN_METRES, getShallowMark, SHALLOW_RED, shallowStripe } from './depth.js';
+import * as contours from './contours.js';
 
 export const ANCHOR = 'sb-charts-top';
 const CONTOUR_COLOUR = '#00C8B4';
 const ORPHAN_AGE_MS = 60 * 60 * 1000;
 const PLAIN_FILL = '#3eb8e0';
+const SHALLOW_PATTERN = 'sb-shallow';
 const TILE_TYPE = { 1: 'mvt', 2: 'png', 3: 'jpeg', 4: 'webp', 5: 'avif' };
 /** Names a depth value goes by in vector charts, most likely first. */
 const DEPTH_NAMES = [
@@ -169,6 +171,11 @@ function layersFor(chart) {
     return [{ id: `${source}-raster`, type: 'raster', source, layout: { visibility }, paint: { 'raster-opacity': opacity, 'raster-fade-duration': 0 } }];
   }
   const coloured = Boolean(chart.depthField);
+  // Water shallower than the depth picked in Settings is marked in red, whatever the colours and the range.
+  const shallow = coloured ? getShallowMark() : 0;
+  const isShallow = shallow > 0 ? ['all', ['has', chart.depthField], ['<=', depthValue(chart), 0], ['>', depthValue(chart), -shallow]] : null;
+  const red = `rgb(${SHALLOW_RED.join(',')})`;
+  const marked = (normal, mark) => (isShallow ? ['case', isShallow, mark, normal] : normal);
   const out = [];
   chart.vectorLayers.forEach((layer, n) => {
     const base = { source, 'source-layer': layer.id, layout: { visibility } };
@@ -180,19 +187,25 @@ function layersFor(chart) {
         'fill-antialias': false
       }
     });
+    if (isShallow) {
+      out.push({
+        ...base, id: `${source}-shallow-${n}`, type: 'fill', filter: ['all', isType('Polygon', 'MultiPolygon'), isShallow],
+        paint: { 'fill-pattern': SHALLOW_PATTERN, 'fill-opacity': opacity }
+      });
+    }
     out.push({
       ...base, id: `${source}-line-${n}`, type: 'line', filter: isType('LineString', 'MultiLineString'),
       paint: {
-        'line-color': coloured ? rampColour(chart) : CONTOUR_COLOUR,
-        'line-opacity': coloured ? rampOpacity(chart, opacity) : opacity,
+        'line-color': coloured ? marked(rampColour(chart), red) : CONTOUR_COLOUR,
+        'line-opacity': coloured ? marked(rampOpacity(chart, opacity), opacity) : opacity,
         'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.6, 14, 1.4]
       }
     });
     out.push({
       ...base, id: `${source}-point-${n}`, type: 'circle', filter: isType('Point', 'MultiPoint'),
       paint: {
-        'circle-color': coloured ? rampColour(chart) : CONTOUR_COLOUR,
-        'circle-opacity': coloured ? rampOpacity(chart, opacity) : opacity,
+        'circle-color': coloured ? marked(rampColour(chart), red) : CONTOUR_COLOUR,
+        'circle-opacity': coloured ? marked(rampOpacity(chart, opacity), opacity) : opacity,
         'circle-radius': 2.5
       }
     });
@@ -220,7 +233,22 @@ function sourceFor(chart) {
 
 const styleLayers = () => map.getStyle()?.layers || [];
 
+/** The red stripes drawn over a vector chart's shallow water: the map keeps the picture until the basemap changes. */
+function shallowPattern() {
+  if (map.hasImage(SHALLOW_PATTERN)) return;
+  const size = 8;
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const stripe = shallowStripe(x, y);
+      if (stripe) data.set([...stripe, 255], (y * size + x) * 4);
+    }
+  }
+  map.addImage(SHALLOW_PATTERN, { width: size, height: size, data });
+}
+
 function removeFromMap(chart) {
+  contours.detach(chart);
   const source = sourceId(chart);
   for (const layer of styleLayers()) if (layer.source === source) map.removeLayer(layer.id);
   if (map.getSource(source)) map.removeSource(source);
@@ -246,12 +274,23 @@ function addToMap(chart) {
   }
   map.addSource(sourceId(chart), sourceFor(chart));
   const above = layerAbove(chart);
+  if (chart.view === 'vector' && chart.depthField && getShallowMark() > 0) shallowPattern();
   for (const layer of layersFor(chart)) map.addLayer(layer, above);
+  contours.attach(chart, above, hooks.labelFont());
 }
 
 /** Puts every chart on the map again: after start-up and after each change of basemap. */
 export function addAll() {
   for (const chart of charts) addToMap(chart);
+}
+
+/** The shallow-water depth changed: every layer that holds depths is drawn again. Nothing is saved. */
+export function redrawDepths() {
+  for (const chart of charts) {
+    if (chart.view === 'picture') continue;
+    if (chart.view === 'depth') chart.rev = (chart.rev || 0) + 1;
+    addToMap(chart);
+  }
 }
 
 /** A chart's colours, range, opacity or visibility changed: redraw it and remember the change. */
@@ -395,6 +434,7 @@ export async function remove(chart) {
   archives.delete(chart.id);
   for (const key of [...demCache.keys()]) if (key.startsWith(`${chart.id}/`)) demCache.delete(key);
   if (chart.kind === 'geotiff') survey.close(chart.id);
+  contours.forget(chart.id);
   if (chart.file) await files.remove(chart.file);
   if (chart.gridFile) await files.remove(chart.gridFile);
   await offline.removeSource(tileSource(chart));
@@ -502,6 +542,7 @@ export async function start(theMap, theHooks) {
   map = theMap;
   hooks = { ...hooks, ...theHooks };
   installHandlers();
+  contours.begin(map);
   const saved = (await db.all('charts')).sort((a, b) => a.added - b.added);
   const listing = await files.list();
   const present = listing && new Set(listing.map((f) => f.name));

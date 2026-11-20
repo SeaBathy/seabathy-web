@@ -16,6 +16,8 @@ const MAX_CHUNK_BYTES = 24 * 1024 * 1024;
 /** A map tile's size, and the same with one extra cell all round so shading has no seams. */
 const N = 256;
 const M = N + 2;
+/** The side of a map tile in cells. A tile's depths come as (TILE + 2) each way: one cell beyond each side. */
+export const TILE = N;
 /** A close-in tile is read from the file unless that would take more source cells than this. */
 const MAX_WINDOW_CELLS = 6_000_000;
 /** The same for the 3D view's grid, which is read once and may take a moment. */
@@ -458,7 +460,7 @@ async function readCells(chart, handle, sx, sy, cols, maxCells, signal) {
 }
 
 /** The depths under map tile [z, x, y] as M × M metres (negative down), or null when it's empty. */
-async function elevationTile(chart, z, x, y, signal) {
+export async function elevationTile(chart, z, x, y, signal) {
   const key = `${chart.id}/${z}/${x}/${y}`;
   if (tileCache.has(key)) {
     const hit = tileCache.get(key);

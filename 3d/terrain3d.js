@@ -121,7 +121,10 @@ export class Terrain3D {
       uValidHi: { value: new Uint32Array(3) },
       // 0 = colour by depth, 1 = colour by slope (degrees, up to uSlopeMax).
       uColorMode: { value: 0 },
-      uSlopeMax: { value: 20 }
+      uSlopeMax: { value: 20 },
+      // Water shallower than this many metres gets red stripes, uStripe screen dots apart; 0 = none.
+      uShallow: { value: 0 },
+      uStripe: { value: 8 }
     };
     this.ref = 0;
     this.contourLabels = [];
@@ -210,6 +213,8 @@ uniform float uClipMin;
 uniform float uClipMax;
 uniform float uColorMode;
 uniform float uSlopeMax;
+uniform float uShallow;
+uniform float uStripe;
 varying float vElev;
 varying vec2 vDrapeUv;
 varying vec3 vObjNormal;
@@ -289,6 +294,13 @@ if (uContour > 0.0) {
   float wm = max(fwidth(cm), 1e-5);
   float major = 1.0 - min(abs(fract(cm - 0.5) - 0.5) / (wm * 1.6), 1.0);
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.02, 0.05, 0.09), max(minor * 0.35, major * 0.75));
+}
+if (uShallow > 0.0 && vElev <= 0.0 && vElev > -uShallow) {
+  // Shallow water, as on the chart: red stripes with a white edge, on the slant, the same
+  // width on the screen at any zoom.
+  float across = fract((gl_FragCoord.x + gl_FragCoord.y) / uStripe);
+  if (across < 0.375) diffuseColor.rgb = vec3(0.90, 0.08, 0.12);
+  else if (across < 0.5) diffuseColor.rgb = vec3(1.0);
 }`);
     };
 
@@ -614,6 +626,11 @@ if (uContour > 0.0) {
 
   setContourInterval(metres) {
     this.uniforms.uContour.value = metres;
+  }
+
+  /** Marks water shallower than [metres] with red stripes; 0 for none. */
+  setShallow(metres) {
+    this.uniforms.uShallow.value = metres > 0 ? metres : 0;
   }
 
   setExaggeration(value) {
@@ -1378,6 +1395,7 @@ if (uContour > 0.0) {
         this.renderCount++;
         this.#chooseDetail();
         if (this.boat?.group.visible) this.#placeBoat();
+        this.uniforms.uStripe.value = 8 * this.renderer.getPixelRatio();
         const shadows = this.renderer.shadowMap.needsUpdate && this.sun.castShadow;
         if (this.caster) this.caster.visible = shadows;
         this.renderer.render(this.scene, this.camera);
@@ -1537,7 +1555,7 @@ if (uContour > 0.0) {
     const shadowChanging = new Set(['setModel', 'setSun', 'setShadows', 'setClip']);
     const redrawing = ['setModel', 'setPalette', 'setContourInterval', 'setExaggeration', 'setSun', 'setShadows',
       'setSeaSurface', 'setAutoRotate', 'setClip', 'setImagery', 'setDrapeMix', 'setContourLabels', 'refreshContourLabelVisibility',
-      'setColorMode', 'setWaypoints', 'setTapMark', 'setBoat', 'setFollowBoat', 'cameraPreset', 'face', 'focusOn', 'focusGrid',
+      'setColorMode', 'setShallow', 'setWaypoints', 'setTapMark', 'setBoat', 'setFollowBoat', 'cameraPreset', 'face', 'focusOn', 'focusGrid',
       'setProfile', 'clearProfile'];
     for (const name of redrawing) {
       const original = this[name];

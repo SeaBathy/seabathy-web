@@ -97,6 +97,39 @@ await shot('settings');
 await page.click('#sheet-close');
 await page.click('#drawer-close');
 
+// Contour lines with water shallower than 10 m marked, then the same seabed coloured by slope.
+await page.evaluate(async () => {
+  const s = window.seabathy;
+  const chart = s.charts.list()[0];
+  chart.contours = { on: true, metres: null };
+  s.depth.setShallowMark(10);
+  await s.charts.restyle(chart, { save: false });
+});
+await page.waitForFunction(() => window.seabathy.contours.dataOf(window.seabathy.charts.list()[0].id)?.features.length > 0, null, { timeout: 60000 });
+await settle(1500);
+await idle();
+await settle(600);
+await shot('contours');
+await page.evaluate(async () => {
+  const s = window.seabathy;
+  const chart = s.charts.list()[0];
+  chart.ramp = { ...chart.ramp, colourBy: 'slope' };
+  s.depth.setShallowMark(0);
+  await s.charts.restyle(chart, { save: false });
+});
+await settle(1500);
+await idle();
+await settle(600);
+await shot('slope');
+await page.evaluate(async () => {
+  const s = window.seabathy;
+  const chart = s.charts.list()[0];
+  chart.contours = { on: false, metres: null };
+  chart.ramp = { ...chart.ramp, colourBy: 'depth' };
+  await s.charts.restyle(chart, { save: false });
+});
+await settle(800);
+
 // A route across the water, with the card that says its legs.
 await page.click('#btn-route');
 for (const [lng, lat] of [[148.905, -20.055], [148.93, -20.042], [148.958, -20.05]]) {
