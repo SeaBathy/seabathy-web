@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { serve, appRoot, workDir } from './server.mjs';
-import { writeFixtures, AREA, surveyDepth } from './fixtures.mjs';
+import { writeFixtures, AREA, surveyDepth, withExif } from './fixtures.mjs';
 
 const engineName = process.env.ENGINE || 'webkit';
 const windowsWebkit = engineName === 'webkit' && process.platform === 'win32';
@@ -299,7 +299,7 @@ const fixtures = await writeFixtures(path.join(workDir, 'data'));
 /** Files the app's server answers with something other than what is on disk (a newer version). */
 const swap = new Map();
 const appServer = await serve({ root: appRoot, port: APP_PORT, swap });
-const dataServer = await serve({ root: path.join(workDir, 'data'), port: DATA_PORT, cors: true });
+const dataServer = await serve({ root: path.join(workDir, 'data'), port: DATA_PORT, cors: true, any: new Map([['/xyz/', path.join(workDir, 'data', 'tile.png')]]) });
 console.log(`\n${engineName} on ${process.platform}, set up as an iPhone 15, at ${APP}: ${kept ? 'a profile kept on disk' : 'a private window'}${worker ? '' : ', service worker off'}\n`);
 
 let context = await launch();
@@ -1177,6 +1177,154 @@ await step('GPX: export, delete the waypoint, import the file, and it comes back
   return `${text.length} bytes of GPX, ${shares ? "handed to the share sheet" : "saved as a download"}`;
 });
 
+await step('Photos: a waypoint made where a photo was taken, photos added to a waypoint and deleted, and carried in the backup', async () => {
+  await closeSheet(page);
+  await goTo(page, MID.lng, MID.lat, 11);
+  // Three photos made here: one as a camera writes it, with its place and time; the same held on its side; and one that says nothing.
+  const jpeg = Buffer.from(await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 2400;
+    canvas.height = 1800;
+    const context2d = canvas.getContext('2d');
+    const fade = context2d.createLinearGradient(0, 0, 2400, 1800);
+    fade.addColorStop(0, '#0af');
+    fade.addColorStop(1, '#fa0');
+    context2d.fillStyle = fade;
+    context2d.fillRect(0, 0, 2400, 1800);
+    return canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+  }), 'base64');
+  const SPOT = { lat: -20.25, lng: 149.05 };
+  const when = Date.UTC(2026, 5, 1, 3, 4, 5);
+  const placed = path.join(workDir, 'data', `photo-placed-${engineName}.jpg`);
+  const turned = path.join(workDir, 'data', `photo-turned-${engineName}.jpg`);
+  const plain = path.join(workDir, 'data', `photo-plain-${engineName}.jpg`);
+  writeFileSync(placed, withExif(jpeg, { ...SPOT, when: new Date(when) }));
+  writeFileSync(turned, withExif(jpeg, { ...SPOT, when: new Date(when), turned: true }));
+  writeFileSync(plain, jpeg);
+  const said = await page.evaluate((text) => window.seabathy.photos.readExif(Uint8Array.from(atob(text), (c) => c.charCodeAt(0)).buffer), readFileSync(placed).toString('base64'));
+  expect(Math.abs(said.lat - SPOT.lat) < 1e-5 && Math.abs(said.lng - SPOT.lng) < 1e-5 && said.taken === when, `the photo's notes were read as ${JSON.stringify(said)}`);
+  const nothing = await page.evaluate((text) => window.seabathy.photos.readExif(Uint8Array.from(atob(text), (c) => c.charCodeAt(0)).buffer), jpeg.toString('base64'));
+  expect(nothing.lat === null && nothing.lng === null && nothing.taken === null, `a photo with no notes was read as ${JSON.stringify(nothing)}`);
+  const before = await page.evaluate(async () => ({ marks: window.seabathy.waypoints.list().length, photos: await window.seabathy.photos.count() }));
+  const kept = () => page.evaluate(() => window.seabathy.photos.count());
+  const marks = () => page.evaluate(() => window.seabathy.waypoints.list().length);
+  /** The photo a waypoint lists at [index], as it is kept: its size, and that it is a JPEG. */
+  const photoOf = (name, index) => page.evaluate(async ([wanted, n]) => {
+    const waypoint = window.seabathy.waypoints.list().find((w) => w.name === wanted);
+    const photo = waypoint?.photos?.[n];
+    const bytes = photo && await window.seabathy.photos.get(photo.id);
+    if (!bytes) return null;
+    const picture = await createImageBitmap(new Blob([bytes]));
+    const head = new Uint8Array(bytes.slice(0, 2));
+    return { width: picture.width, height: picture.height, jpeg: head[0] === 0xff && head[1] === 0xd8, taken: photo.taken, bytes: bytes.byteLength };
+  }, [name, index]);
+  const thumbs = (n) => page.waitForFunction((count) => {
+    const small = [...document.querySelectorAll('#wpt-photos .photo-thumb')];
+    return small.length === count && small.every((s) => /^url\("blob:/.test(getComputedStyle(s).backgroundImage));
+  }, n, { timeout: 30000 });
+
+  // A waypoint from a photo: it goes where the photo was taken, the chart moves there, and its card opens with the photo on it.
+  await openLayers(page);
+  expect(await page.locator('#wpt-from-photo').isVisible(), 'the Layers panel does not offer a waypoint from a photo');
+  await page.setInputFiles('#wpt-photo-pick', placed);
+  await page.waitForFunction((n) => window.seabathy.waypoints.list().length === n + 1, before.marks, { timeout: 30000 });
+  await thumbs(1);
+  const made = await page.evaluate(() => {
+    const w = window.seabathy.waypoints.list().at(-1);
+    const centre = window.seabathy.map.getCenter();
+    return { name: w.name, desc: w.desc, lat: w.lat, lng: w.lng, photos: (w.photos || []).length, centre: [centre.lng, centre.lat], drawer: document.querySelector('#drawer').hidden };
+  });
+  expect(/^Photo \d+ [A-Z][a-z]{2} \d\d:\d\d$/.test(made.name) && made.desc === `From a photo taken ${made.name.slice(6)}` && made.photos === 1, `the waypoint from a photo is ${JSON.stringify(made)}`);
+  expect(Math.abs(made.lat - SPOT.lat) < 1e-5 && Math.abs(made.lng - SPOT.lng) < 1e-5, `the photo was taken at ${SPOT.lat}, ${SPOT.lng}; the waypoint is at ${made.lat}, ${made.lng}`);
+  expect(Math.abs(made.centre[0] - SPOT.lng) < 1e-3 && Math.abs(made.centre[1] - SPOT.lat) < 1e-3 && made.drawer, 'the chart did not go to the new waypoint with the panel put away');
+  const first = await photoOf(made.name, 0);
+  expect(first && first.width === 1600 && first.height === 1200 && first.jpeg && first.taken === when, `the photo was kept as ${JSON.stringify(first)}`);
+  await shot(page, '6b-photo-waypoint');
+
+  // A second photo added in the card, one the camera took on its side: it is kept upright.
+  await page.setInputFiles('#wpt-photo-file', turned);
+  await thumbs(2);
+  const second = await photoOf(made.name, 1);
+  expect(second && second.width === 1200 && second.height === 1600, `a photo taken with the camera on its side was kept as ${JSON.stringify(second)}`);
+  expect(await kept() === before.photos + 2, 'two photos were added but not two kept');
+  // The newest is first. It opens full size with its time, and can be deleted.
+  await page.locator('#wpt-photos .photo-thumb').first().click();
+  await page.waitForFunction(() => document.querySelector('#wpt-photo-full')?.naturalWidth === 1200, null, { timeout: 30000 });
+  expect(/[A-Z]{3} \d+ [A-Z]{3} \d{4}, \d\d:\d\d/.test(await page.locator('#sheet-body').innerText()), 'the photo does not say when it was taken');
+  await shot(page, '6c-photo-full');
+  await page.click('#wpt-photo-delete');
+  await page.click('#confirm-yes');
+  await thumbs(1);
+  expect(await kept() === before.photos + 1 && (await photoOf(made.name, 0)).width === 1600, 'deleting one photo did not leave the other');
+  // What is typed in the card is still saved with Save, and the photo stays.
+  await page.fill('#wpt-name', 'Bommie photo');
+  await page.click('#wpt-save');
+  await page.waitForFunction(() => window.seabathy.waypoints.list().some((w) => w.name === 'Bommie photo' && w.photos?.length === 1));
+
+  // A photo that doesn't say where it was taken: nothing is made on Cancel; "At the crosshair" puts it there.
+  await goTo(page, MID.lng, MID.lat, 11);
+  await openLayers(page);
+  expect(/Bommie photo\s+📷/.test(await page.locator('#wpt-list').innerText()), 'the list does not mark the waypoint that has a photo');
+  await page.setInputFiles('#wpt-photo-pick', plain);
+  await page.waitForSelector('#photo-here');
+  expect(/No location in this photo/.test(await page.locator('.overlay .card').innerText()), 'a photo with no place in it was not explained');
+  await page.click('#photo-cancel');
+  await page.waitForFunction(() => !document.querySelector('.overlay'));
+  expect(await marks() === before.marks + 1 && await kept() === before.photos + 1, 'cancelling left a waypoint or a photo behind');
+  // "Where I am now" puts it at the phone's own position, from its GPS, with the GPS button off.
+  await page.setInputFiles('#wpt-photo-pick', plain);
+  await page.waitForSelector('#photo-gps');
+  expect(/where you are now, from the phone's GPS/.test(await page.locator('.overlay .card').innerText()), 'the card does not offer the GPS position');
+  await shot(page, '6d-photo-no-place');
+  await page.click('#photo-gps');
+  await page.waitForFunction((n) => window.seabathy.waypoints.list().length === n + 2, before.marks, { timeout: 60000 });
+  await thumbs(1);
+  const atBoat = await page.evaluate(() => { const w = window.seabathy.waypoints.list().at(-1); return { lat: w.lat, lng: w.lng, desc: w.desc, gps: window.seabathy.gps.isOn() }; });
+  expect(Math.abs(atBoat.lat - FIX.latitude) < 1e-4 && Math.abs(atBoat.lng - FIX.longitude) < 1e-4 && !atBoat.gps, `a photo put "where I am now" went to ${atBoat.lat}, ${atBoat.lng}; the phone is at ${FIX.latitude}, ${FIX.longitude}`);
+  expect(/^From a photo taken /.test(atBoat.desc) && !/wind|tide|swell|wave/i.test(atBoat.desc), `the waypoint's note is "${atBoat.desc}"`);
+  await page.click('#wpt-delete');
+  await page.click('#confirm-yes');
+  await page.waitForFunction((n) => window.seabathy.waypoints.list().length === n + 1, before.marks);
+  await goTo(page, MID.lng, MID.lat, 11);
+  await openLayers(page);
+  await page.setInputFiles('#wpt-photo-pick', plain);
+  await page.click('#photo-here');
+  await page.waitForFunction((n) => window.seabathy.waypoints.list().length === n + 2, before.marks, { timeout: 30000 });
+  await thumbs(1);
+  const here = await page.evaluate(() => { const w = window.seabathy.waypoints.list().at(-1); return { lat: w.lat, lng: w.lng, name: w.name }; });
+  expect(Math.abs(here.lat - MID.lat) < 1e-4 && Math.abs(here.lng - MID.lng) < 1e-4, `a photo with no place went to ${here.lat}, ${here.lng}, not the crosshair`);
+  await closeSheet(page);
+
+  // The backup holds the photos, and brings them back with their waypoints.
+  const built = await page.evaluate(() => window.seabathy.backup.build('test'));
+  const listed = built.waypoints.filter((w) => w.photos?.length === 1);
+  expect(listed.length === 2 && Object.keys(built.photos).length === 2 && listed.every((w) => typeof built.photos[w.photos[0].id] === 'string'), `the backup lists ${listed.length} waypoints with a photo and holds ${Object.keys(built.photos).length} photos`);
+  const removeMark = async (name) => {
+    await openLayers(page);
+    await page.locator('#wpt-list .wrow', { hasText: name }).locator('.wrow-edit').click();
+    await page.click('#wpt-delete');
+    await page.click('#confirm-yes');
+  };
+  await removeMark('Bommie photo');
+  await page.waitForFunction((n) => window.seabathy.waypoints.list().length === n + 1, before.marks);
+  expect(await kept() === before.photos + 1, "deleting a waypoint left its photo on the phone");
+  await removeMark(here.name);
+  await page.waitForFunction((n) => window.seabathy.waypoints.list().length === n, before.marks);
+  expect(await kept() === before.photos, 'photos were left behind with no waypoint');
+  const back = await page.evaluate((backup) => window.seabathy.backup.restore(backup), built);
+  expect(back.waypoints === 2 && await kept() === before.photos + 2, `restoring added ${back.waypoints} waypoints and there are ${await kept()} photos`);
+  const again = await photoOf('Bommie photo', 0);
+  expect(again && again.width === 1600 && again.height === 1200 && again.taken === when, `the photo came back from the backup as ${JSON.stringify(again)}`);
+  // Left as it was found.
+  await removeMark('Bommie photo');
+  await page.waitForFunction((n) => window.seabathy.waypoints.list().length === n + 1, before.marks);
+  await removeMark(here.name);
+  await page.waitForFunction((n) => window.seabathy.waypoints.list().length === n, before.marks);
+  expect(await kept() === before.photos, 'the photos were not cleared away');
+  await closeSheet(page);
+  return `a ${jpeg.length.toLocaleString()}-byte photo kept as ${first.bytes.toLocaleString()} bytes at 1600 px; one held sideways kept upright; in and out of a backup`;
+});
+
 await step('A web chart is read with part-file requests from another site', async () => {
   await openMenu(page, 'menu-charts');
   await page.click('#chart-web');
@@ -1191,20 +1339,48 @@ await step('A web chart is read with part-file requests from another site', asyn
   return remote.name;
 });
 
-await step('Save for offline: the area on screen is saved, at a gentle pace', async () => {
+/** Sets the detail in the box's bar to a zoom with its less and more buttons. */
+const detailTo = async (page, zoom) => {
+  for (let i = 0; i < 24; i++) {
+    const now = Number((await page.locator('#offline-detail').innerText()).replace(/\D/g, ''));
+    if (now === zoom) return;
+    await page.click(now > zoom ? '#offline-less' : '#offline-more');
+  }
+};
+const tilesSaid = (text) => Number(((/^([\d,]+) tiles?/.exec(text) || [])[1] || '').replace(/,/g, ''));
+
+await step('Save for offline: the area is drawn as a box, its detail picked there, and saved at a gentle pace', async () => {
   await openMenu(page, 'menu-offline');
-  // The least detail, so the save is a handful of tiles.
-  await page.locator('#offline-detail').fill('10');
-  const summary = await page.locator('#offline-summary').innerText();
+  expect(/draw the area on the chart/.test(await page.locator('#sheet-body').innerText()), 'the Offline maps panel does not say the area is drawn on the chart');
+  await shot(page, '7a-offline-panel');
+  await page.click('#offline-choose');
+  await page.waitForSelector('#area-bar');
+  expect(await page.locator('#sheet-layer').isHidden() && await page.locator('#area-go').isDisabled() && (await page.locator('#area-go').innerText()).trim() === 'Save area', 'the box does not start empty, with Save area off');
+  await drawBox(page);
+  // Little detail, so the save is a handful of tiles; one step less is fewer still.
+  await detailTo(page, 9);
+  await pickerReady(page);
+  const less = (await pickerSays(page)).info;
+  await detailTo(page, 10);
+  await pickerReady(page);
+  const says = (await pickerSays(page)).info;
+  await shot(page, '7b-offline-box');
+  expect(tilesSaid(says) > 0 && tilesSaid(less) > 0 && tilesSaid(says) > tilesSaid(less), `at zoom 9 the box means "${less}", at zoom 10 "${says}"`);
+  const drawn = await boxOnChart(page);
   const started = Date.now();
-  await page.click('#offline-save');
+  await page.click('#area-go');
   await page.waitForFunction(() => window.seabathy.offline.list().length === 1, null, { timeout: 180000 });
   const pack = await page.evaluate(() => window.seabathy.offline.list()[0]);
   expect(pack.tiles > 0 && pack.failed === 0, `saved ${pack.tiles} tiles, ${pack.failed} failed`);
+  expect(Math.abs(pack.bounds[0] - drawn.west) < 0.02 && Math.abs(pack.bounds[2] - drawn.east) < 0.02 && Math.abs(pack.bounds[1] - drawn.south) < 0.02 && Math.abs(pack.bounds[3] - drawn.north) < 0.02 && pack.maxZoom === 10 && pack.minZoom < 10,
+    `the area saved is ${pack.bounds} at zoom ${pack.minZoom} to ${pack.maxZoom}; the box drawn was ${JSON.stringify(drawn)}`);
   const perSecond = pack.tiles / ((Date.now() - started) / 1000);
   expect(perSecond <= 22, `saved at ${perSecond.toFixed(1)} tiles a second`);
+  expect(await page.locator('#area-bar').count() === 0, 'the box stayed on the chart after the save');
+  await openMenu(page, 'menu-offline');
+  expect(/SAVED AREAS/.test(await page.locator('#sheet-body').innerText()), 'the saved area is not listed');
   await closeSheet(page);
-  return `${pack.tiles} tiles, ${pack.bytes} bytes, zoom ${pack.minZoom} to ${pack.maxZoom}; the panel said "${summary}"`;
+  return `${pack.tiles} tiles, ${pack.bytes} bytes, zoom ${pack.minZoom} to ${pack.maxZoom}; the box said "${says}"`;
 });
 
 await step('Maps: satellite overlay with its opacity, a basemap change, and a bad tile link refused', async () => {
@@ -1224,6 +1400,71 @@ await step('Maps: satellite overlay with its opacity, a basemap change, and a ba
   await page.fill('#custom-url', 'https://example.org/tiles/{z}/{x}.png');
   await page.click('#custom-save');
   expect((await page.locator('#toast').innerText()).includes('{z}, {x} and {y}'), 'a tile link without {y} was accepted');
+
+  // Your own map link: drawn through the app, an area of it saved by drawing a box, and the saved tiles used when its server can't be reached.
+  let asked = 0;
+  const count = (request) => { if (request.url().includes('/xyz/')) asked++; };
+  page.on('request', count);
+  await page.fill('#custom-url', `${DATA}xyz/{z}/{x}/{y}.png`);
+  await page.fill('#custom-credit', 'Test tiles');
+  await page.click('#custom-save');
+  await page.waitForFunction(() => window.seabathy.basemap.state.basemap === 'custom' && window.seabathy.map.getSource('base')?.tiles?.[0]?.startsWith('sb://b/custom/'), null, { timeout: 30000 });
+  await closeSheet(page);
+  await goTo(page, MID.lng, MID.lat, 10);
+  for (let i = 0; i < 100 && !asked; i++) await page.waitForTimeout(100);
+  expect(asked > 0 && (await page.locator('#credits').innerText()).includes('Test tiles'), `the map at the link was asked for ${asked} tiles, and the credit line is "${await page.locator('#credits').innerText()}"`);
+  await openMenu(page, 'menu-offline');
+  expect(/Your own map/.test(await page.locator('#sheet-body').innerText()) && /right to save your own map offline/.test(await page.locator('#sheet-body').innerText()), 'Offline maps does not offer your own map, with the note about its licence');
+  // Only the map at the link: the others are switched off here, so nothing else is fetched.
+  await page.evaluate(() => {
+    for (const label of document.querySelectorAll('#sheet-body label.toggle')) {
+      const box = label.querySelector('input');
+      if (!label.textContent.includes('Your own map') && box.checked) box.click();
+    }
+  });
+  await page.click('#offline-choose');
+  await page.waitForSelector('#area-bar');
+  await drawBox(page);
+  await detailTo(page, 10);
+  await pickerReady(page);
+  await page.click('#area-go');
+  await page.waitForFunction(() => window.seabathy.offline.list().some((p) => p.source.startsWith('base:')), null, { timeout: 180000 });
+  const own = await page.evaluate(() => {
+    const s = window.seabathy;
+    const pack = s.offline.list().find((p) => p.source.startsWith('base:'));
+    const z = pack.maxZoom;
+    const lng = (pack.bounds[0] + pack.bounds[2]) / 2;
+    const sin = Math.sin((((pack.bounds[1] + pack.bounds[3]) / 2) * Math.PI) / 180);
+    return { label: pack.label, tiles: pack.tiles, failed: pack.failed, source: pack.source, now: s.basemap.customSource(), z, x: Math.floor(((lng + 180) / 360) * 2 ** z), y: Math.floor((0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * 2 ** z) };
+  });
+  expect(own.label === 'Your own map' && own.tiles > 0 && own.failed === 0 && own.source === own.now, `the area of your own map was saved as ${JSON.stringify(own)}`);
+  // With no signal, a tile inside the area still comes, from the phone; one outside it does not.
+  await context.setOffline(true);
+  await page.waitForFunction(() => !navigator.onLine);
+  const away = await page.evaluate(async ({ z, x, y }) => {
+    const b = window.seabathy.basemap;
+    const inside = await b.customTile(z, x, y);
+    const outside = await b.customTile(z, x + 300, y);
+    return { inside: inside ? [...new Uint8Array(inside.slice(0, 4))].join() : null, outside };
+  }, own);
+  await context.setOffline(false);
+  await page.waitForFunction(() => navigator.onLine);
+  expect(away.inside === '137,80,78,71' && away.outside === null, `with no signal, a saved tile came as ${away.inside} and one not saved as ${away.outside === null ? null : 'a tile'}`);
+  // Another link is another map: the tiles saved from the first are not shown for it.
+  const other = await page.evaluate(async ([url, { z, x, y }]) => {
+    const b = window.seabathy.basemap;
+    await b.setCustom(url, '');
+    return { source: b.customSource(), tile: await b.customTile(z, x, y) };
+  }, [`${DATA}other-map/{z}/{x}/{y}.png`, own]);
+  expect(other.source !== own.source && other.tile === null, 'the tiles saved from one link were given for another');
+  page.off('request', count);
+  // Put away: the saved area of that map, and the link.
+  await openMenu(page, 'menu-offline');
+  await page.locator('#sheet-body .row.danger', { hasText: 'Your own map' }).click();
+  await page.click('#confirm-yes');
+  await page.waitForFunction(() => !window.seabathy.offline.list().some((p) => p.source.startsWith('base:')));
+  await page.evaluate(() => window.seabathy.basemap.setCustom('', ''));
+  await openMenu(page, 'menu-maps');
   await page.click('#basemap-osm');
   await page.waitForFunction(() => window.seabathy.basemap.state.basemap === 'osm' && Boolean(window.seabathy.map.getLayer('sb-base')) && Boolean(window.seabathy.map.getLayer('sb-sat')), null, { timeout: 30000 });
   const changed = await page.evaluate(() => ({

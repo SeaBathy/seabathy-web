@@ -38,9 +38,11 @@ function shape(tag, cls) {
  *
  * [maxKm] and [maxDegrees] are the most the area may span either way. [describe] is given the
  * box and answers with a line about it, or { text, ok } where ok false keeps the confirm
- * button off; it may answer later (a promise).
+ * button off; it may answer later (a promise). [extra] is put in the bar above the buttons (a
+ * choice that changes the answer, say), and [onReady] is given { again }, which asks [describe]
+ * afresh about the box as it is.
  */
-export function pickArea(map, { title, maxKm, maxDegrees = Infinity, confirmLabel = 'Get depths', describe = () => '' }) {
+export function pickArea(map, { title, maxKm, maxDegrees = Infinity, confirmLabel = 'Get depths', describe = () => '', extra = null, onReady = null }) {
   closeOpen?.();
   return new Promise((resolve) => {
     const holder = map.getContainer();
@@ -76,12 +78,13 @@ export function pickArea(map, { title, maxKm, maxDegrees = Infinity, confirmLabe
     const hintText = el('div', { class: 'area-hint', text: 'Drag the box to move it, or a corner to resize it.' });
     const confirm = button(confirmLabel, () => finish(box), { primary: true, id: 'area-go' });
     const bar = el('div', { class: 'area-bar', id: 'area-bar', role: 'dialog', 'aria-label': 'Choose the area' },
-      el('div', { class: 'area-title', text: title }), sizeText, infoText, hintText,
+      el('div', { class: 'area-title', text: title }), sizeText, infoText, hintText, extra,
       el('div', { class: 'card-actions' }, button('Cancel', () => finish(null), { id: 'area-cancel' }), confirm));
     document.body.append(bar);
     document.body.classList.add('picking');
     // An earlier message would lie over the bar's buttons.
     hideToast();
+    onReady?.({ again: () => { if (box) setBox(box); } });
 
     const tooBig = (b) => Math.max(widthKm(b), heightKm(b)) > maxKm || Math.max(b.north - b.south, b.east - b.west) > maxDegrees;
 

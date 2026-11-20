@@ -4,8 +4,10 @@
 import { Marker } from '../vendor/maplibre-gl.js';
 import * as db from './db.js';
 import * as units from './units.js';
+import * as photos from './photos.js';
+import * as gps from './gps.js';
 import { buildGpx, parseGpx } from './gpx.js';
-import { add, el, svg, toast, openSheet, topSheet, backFrom, closeSheet, closeDrawer, button, mini, confirmCard, saveFile } from './ui.js';
+import { add, el, svg, toast, openSheet, topSheet, backFrom, closeSheet, closeDrawer, refreshSheet, button, mini, row, heading, card, confirmCard, saveFile } from './ui.js';
 
 export const COLOURS = ['#EF4444', '#F97316', '#EAB308', '#22C55E', '#3B82F6', '#A855F7'];
 
@@ -71,6 +73,8 @@ async function save(waypoint) {
 
 async function remove(waypoint) {
   await db.remove('waypoints', waypoint.id);
+  // Its photos go with it.
+  for (const photo of waypoint.photos || []) await photos.remove(photo.id).catch(() => {});
   waypoints.splice(waypoints.indexOf(waypoint), 1);
   markers.get(waypoint.id)?.remove();
   markers.delete(waypoint.id);
@@ -110,6 +114,132 @@ export async function addQuiet(lng, lat, desc = '') {
   const waypoint = { id: newId(), name: nextName(), lat, lng, color: COLOURS[0], desc, icon: 'marker', created: Date.now() };
   await save(waypoint);
   return waypoint;
+}
+
+// ---------------------------------------------------------------- photos
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const two = (n) => String(n).padStart(2, '0');
+/** "20 Nov 14:32", as the Android app names a waypoint made from a photo. */
+const shortStamp = (millis) => {
+  const d = new Date(millis);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${two(d.getHours())}:${two(d.getMinutes())}`;
+};
+/** "Fri 20 Nov 2026, 14:32". */
+const longStamp = (millis) => {
+  const d = new Date(millis);
+  return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${two(d.getHours())}:${two(d.getMinutes())}`;
+};
+
+/** A waypoint's photos changed: kept as it is saved now, whatever is half-typed in its card. */
+async function keepPhotos(waypoint, list) {
+  if (list.length) waypoint.photos = list;
+  else delete waypoint.photos;
+  await db.put('waypoints', waypoint);
+  changed();
+}
+
+/** A photo full width, with when it was taken, and a way to delete it. */
+function showPhoto(waypoint, photo) {
+  openSheet(waypoint.name, (body) => {
+    const here = topSheet();
+    const image = el('img', { class: 'photo-full', id: 'wpt-photo-full', alt: `Photo of ${waypoint.name}` });
+    photos.url(photo.id).then((address) => { if (address) image.src = address; });
+    add(body,
+      image,
+      heading(longStamp(photo.taken).toUpperCase()),
+      row('Delete this photo', null, async () => {
+        if (!(await confirmCard('Delete this photo?', "It is taken off this phone and can't be brought back.", 'Delete', { danger: true }))) return;
+        await keepPhotos(waypoint, (waypoint.photos || []).filter((p) => p.id !== photo.id));
+        await photos.remove(photo.id).catch(() => {});
+        backFrom(here);
+      }, { danger: true, id: 'wpt-photo-delete' }));
+  });
+}
+
+/** The photos of a waypoint in its card: small ones, newest first, and a button to add one. */
+function photoSection(waypoint) {
+  const strip = el('div', { class: 'photo-strip', id: 'wpt-photos' }, [...(waypoint.photos || [])].reverse().map((photo) => {
+    const small = el('button', { class: 'photo-thumb', type: 'button', 'aria-label': `Photo taken ${longStamp(photo.taken)}`, onclick: () => showPhoto(waypoint, photo) });
+    photos.url(photo.id).then((address) => { if (address) small.style.backgroundImage = `url("${address}")`; });
+    return small;
+  }));
+  const picker = el('input', {
+    type: 'file', id: 'wpt-photo-file', accept: 'image/*', hidden: true,
+    onchange: async () => {
+      const file = picker.files[0];
+      picker.value = '';
+      if (!file) return;
+      try {
+        const taken = await photos.add(file);
+        await keepPhotos(waypoint, [...(waypoint.photos || []), taken.photo]);
+        refreshSheet();
+      } catch (error) {
+        toast(error.message || "Couldn't save the photo.");
+      }
+    }
+  });
+  return [
+    heading('PHOTOS'),
+    waypoint.photos?.length ? strip : null,
+    picker,
+    el('button', { class: 'btn photo-add', type: 'button', id: 'wpt-photo-add', text: '📷  Add a photo', 'aria-label': 'Take a photo of this waypoint, or pick one you have', onclick: () => picker.click() })
+  ];
+}
+
+/** A photo no older than this was most likely taken just now, where the phone still is. */
+const JUST_TAKEN_MS = 10 * 60 * 1000;
+
+/**
+ * A waypoint where a photo was taken, with the photo kept on it. The place is the one the
+ * camera wrote in the photo. A photo taken through a web page rarely has one, so it can go
+ * where the phone is now (its GPS) or at the crosshair: the person says which. Only the time
+ * is kept with it: no weather, tide or sea conditions.
+ */
+async function fromPhoto(file) {
+  let taken;
+  try {
+    taken = await photos.add(file);
+  } catch (error) {
+    toast(error.message || "Couldn't read that photo");
+    return;
+  }
+  let { lat, lng } = taken;
+  if (lat === null || lng === null) {
+    // Just taken: most likely here, at the boat. An older one: more likely a place to find on the chart.
+    const fresh = Date.now() - taken.photo.taken < JUST_TAKEN_MS;
+    const answer = await card({
+      badge: 'Waypoint from a photo', title: 'No location in this photo', dismissable: true,
+      paragraphs: ['Photos taken or picked through a web app often come without the place they were taken.', "Put the waypoint where you are now, from the phone's GPS, or at the crosshair?"],
+      actions: [
+        { id: 'no', label: 'Cancel', domId: 'photo-cancel' },
+        { id: 'here', label: 'Crosshair', primary: !fresh, domId: 'photo-here' },
+        { id: 'gps', label: 'Where I am', primary: fresh, domId: 'photo-gps' }
+      ]
+    });
+    if (answer !== 'here' && answer !== 'gps') {
+      await photos.remove(taken.photo.id).catch(() => {});
+      return;
+    }
+    const centre = map.getCenter().wrap();
+    let at = { lat: centre.lat, lng: centre.lng };
+    if (answer === 'gps') {
+      toast('Finding where you are…');
+      const found = await gps.here();
+      if (found) at = found;
+      else toast("Couldn't get a GPS position, so the waypoint is at the crosshair. Its coordinates can be edited.", 7000);
+    }
+    lat = at.lat;
+    lng = at.lng;
+  }
+  const stamp = shortStamp(taken.photo.taken);
+  const name = waypoints.some((w) => w.name === `Photo ${stamp}`) ? nextName() : `Photo ${stamp}`;
+  const waypoint = { id: newId(), name, lat, lng, color: COLOURS[0], desc: `From a photo taken ${stamp}`, icon: 'marker', created: Date.now(), photos: [taken.photo] };
+  await save(waypoint);
+  closeDrawer();
+  map.jumpTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 12) });
+  edit(waypoint);
 }
 
 // ---------------------------------------------------------------- the cards
@@ -162,6 +292,8 @@ export function addAt(lng, lat) {
 /** The card for a waypoint already on the chart: change it, jump to it, or delete it. */
 export function edit(waypoint) {
   const draft = { ...waypoint };
+  // The photos are kept as they are added and deleted, not when Save is tapped.
+  delete draft.photos;
   let typing = false;
   openSheet('Waypoint', (body) => {
     const here = topSheet();
@@ -183,6 +315,7 @@ export function edit(waypoint) {
       position,
       desc,
       looks(draft),
+      photoSection(waypoint),
       el('div', { class: 'actions' },
         button('Delete', async () => {
           if (!(await confirmCard('Delete this waypoint?', `"${waypoint.name}" will be removed from this phone.`, 'Delete', { danger: true }))) return;
@@ -225,7 +358,7 @@ export function drawerSection() {
       ? shown.map((w) => el('div', { class: 'wrow', 'data-id': w.id },
         el('span', { class: 'wrow-dot', style: `--c:${w.color}` }),
         el('span', { class: 'wrow-text' },
-          el('span', { class: 'wrow-name', text: w.name }),
+          el('span', { class: 'wrow-name', text: w.photos?.length ? `${w.name}  📷` : w.name }),
           el('span', { class: 'wrow-pos', text: units.positionText(w.lat, w.lng) })),
         mini('Go', () => {
           closeDrawer();
@@ -235,8 +368,18 @@ export function drawerSection() {
       : [el('div', { class: 'drawer-empty', text: waypoints.length ? 'No waypoint matches that' : 'No waypoints yet' })]));
   };
   const search = el('input', { type: 'search', id: 'wpt-search', placeholder: 'Search waypoints', value: query, autocomplete: 'off', oninput: () => { query = search.value; fill(); } });
+  // As in the Android app: a waypoint where a photo was taken.
+  const picker = el('input', {
+    type: 'file', id: 'wpt-photo-pick', accept: 'image/*', hidden: true,
+    onchange: () => {
+      const file = picker.files[0];
+      picker.value = '';
+      if (file) fromPhoto(file);
+    }
+  });
+  const fromOne = el('button', { class: 'drawer-link', type: 'button', id: 'wpt-from-photo', text: '📷  Waypoint from a photo', 'aria-label': 'Make a waypoint where a photo was taken', onclick: () => picker.click() });
   fill();
-  return [search, results];
+  return [fromOne, picker, search, results];
 }
 
 // ---------------------------------------------------------------- GPX in and out
@@ -253,18 +396,30 @@ export async function exportGpx(routes = []) {
   await saveFile(file, { title: 'SeaBathy waypoints', done: `Saved ${waypoints.length} waypoint${waypoints.length === 1 ? '' : 's'}${also} as ${file.name}` });
 }
 
-/** Adds waypoints read from a file, leaving out any already here (same name, same spot). */
-export async function addAll(found) {
+/**
+ * Adds waypoints read from a file, leaving out any already here (same name, same spot).
+ * [photoOf] is given each photo a waypoint in the file lists and answers with it kept here
+ * ({ id, taken, bytes }), or null when the file doesn't hold it.
+ */
+export async function addAll(found, photoOf = null) {
   let added = 0;
   for (const w of found) {
     if (!Number.isFinite(w.lat) || !Number.isFinite(w.lng)) continue;
     const same = waypoints.some((o) => o.name === (w.name || o.name) && Math.abs(o.lat - w.lat) < 1e-6 && Math.abs(o.lng - w.lng) < 1e-6);
     if (same) continue;
+    const kept = [];
+    if (photoOf && Array.isArray(w.photos)) {
+      for (const photo of w.photos) {
+        const here = await photoOf(photo);
+        if (here) kept.push(here);
+      }
+    }
     await save({
       id: newId(), name: w.name || nextName(), lat: w.lat, lng: w.lng, desc: w.desc || '',
       color: COLOURS.includes(w.color) ? w.color : COLOURS[0],
       icon: ICONS.some((i) => i.id === w.icon) ? w.icon : 'marker',
-      created: Date.now()
+      created: Date.now(),
+      ...(kept.length ? { photos: kept } : {})
     });
     added++;
   }

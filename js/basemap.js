@@ -70,12 +70,45 @@ export function linkError(urlTemplate) {
 
 const expand = (template, z, x, y) => template.replace('{z}', z).replace('{x}', x).replace('{y}', y);
 
+/** A short name for a tile link, so tiles saved from one link are never shown for another. */
+function linkName(text) {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
+  return hash.toString(36);
+}
+
+/** The name the saved tiles of the person's own map are kept under. */
+export const customSource = () => `base:${linkName(state.customUrl)}`;
+
+/** One tile of the person's own map from its server: bytes, or null where the server has none. */
+export async function fetchCustom(z, x, y, signal) {
+  const response = await fetch(expand(state.customUrl, z, x, y), { signal });
+  if (response.status === 404 || response.status === 204) return null;
+  if (!response.ok) throw new Error(`The map server answered ${response.status}`);
+  return response.arrayBuffer();
+}
+
 /** One satellite tile from its server: bytes, or null where the server has none. */
 export async function fetchSatellite(preset, z, x, y, signal) {
   const response = await fetch(expand(preset.url, z, x, y), { signal });
   if (response.status === 404 || response.status === 204) return null;
   if (!response.ok) throw new Error(`The map server answered ${response.status}`);
   return response.arrayBuffer();
+}
+
+/** A tile of the person's own map as the chart is given it: a saved one first, then its server; null when neither has it. */
+export async function customTile(z, x, y, signal) {
+  if (!state.customUrl) return null;
+  if (offline.hasSaved(customSource())) {
+    const saved = await db.getTile(customSource(), z, x, y);
+    if (saved) return saved;
+  }
+  if (!navigator.onLine) return null;
+  try {
+    return await fetchCustom(z, x, y, signal);
+  } catch {
+    return null;
+  }
 }
 
 /** The font the current map has for labels the app adds. */
@@ -141,7 +174,9 @@ export function rebuild() {
   const mine = ++generation;
   const custom = chosen.id === 'custom' ? state.customUrl : null;
   const online = Boolean(chosen.style || chosen.url || custom);
-  if (online && !navigator.onLine) {
+  // The person's own map still shows with no signal where an area of it was saved.
+  const kept = Boolean(custom) && offline.hasSaved(customSource());
+  if (online && !navigator.onLine && !kept) {
     fallback = true;
     hooks.message('No internet: showing your own layers. The online basemap comes back when you connect.');
     apply(ownStyle(), mine, false);
@@ -150,7 +185,7 @@ export function rebuild() {
   fallback = false;
   if (chosen.style) apply(chosen.style, mine, true);
   else if (chosen.url) apply(ownStyle(chosen.url, chosen.maxZoom), mine, false);
-  else if (custom) apply(ownStyle(custom, 22), mine, false);
+  else if (custom) apply(ownStyle(address('b', 'custom', linkName(custom)), 22), mine, false);
   else apply(ownStyle(), mine, false);
 }
 
@@ -224,6 +259,8 @@ export async function start(theMap, theHooks) {
       return null;
     }
   });
+
+  handle('b', (id, z, x, y, signal) => customTile(z, x, y, signal));
 
   map.on('error', (event) => {
     // The online style itself failing to load: fall back to the blank chart.

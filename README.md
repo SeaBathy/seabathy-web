@@ -1,7 +1,7 @@
 # SeaBathy web app
 
 ![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
-![Version 0.3.8](https://img.shields.io/badge/version-0.3.8-informational)
+![Version 0.3.9](https://img.shields.io/badge/version-0.3.9-informational)
 ![Works offline](https://img.shields.io/badge/works-offline-success)
 ![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
 
@@ -167,7 +167,9 @@ Once you have what you want, the app needs no internet:
 
 - **The app itself** is kept on the phone after its first start.
 - **Depths** you downloaded, and files you loaded, are kept on the phone, on the chart and in 3D.
-- **The satellite picture** works for the areas you saved with **Offline maps**.
+- **The satellite picture, a web chart and your own map link** work for the areas you saved
+  with **Offline maps** (Settings → Online and offline maps): pick what to save, then draw the
+  area on the chart, as for depths, and choose how much detail.
 - **GPS** comes from the phone, not the internet, so the boat shows on the chart and in 3D.
 - **Waypoints** and GPX files are kept on the phone.
 - **Marine park zones, names and ramps** work once each has been switched on with a connection.
@@ -197,10 +199,18 @@ signal the chart is your depths and saved satellite on a plain background.
   <img src="screenshots/contours.jpg" alt="Contour lines with their depths, and red stripes over water shallower than 10 m" width="300"> <img src="screenshots/slope.jpg" alt="The same seabed coloured by slope" width="300">
 - **Basemaps:** dark, street map, OpenStreetMap, OpenTopoMap, USGS imagery, your own tile link
   with its credit, or none.
-- **Satellite picture** over the chart with an opacity slider, and savable for offline use.
+- **Satellite picture** over the chart with an opacity slider.
+- **Offline maps:** draw a box on the chart and the satellite picture, a web chart or your own
+  map link is saved for that area, at the detail you pick. The built-in street maps can't be
+  saved: the people who run them don't allow it. Saving your own map link is your call: check
+  its licence.
 - **Waypoints:** the waypoint tool drops one at the crosshair; so does holding a finger on the
   chart, or tapping the seabed in 3D. Name, note, colour and symbol; saved on the phone, and
   listed in the Layers panel with a search box.
+- **Photos on waypoints:** add photos to a waypoint, or make a waypoint from a photo. It goes
+  where the photo was taken when the photo says; if not, where you are now (the phone's GPS)
+  or at the crosshair, as you choose. Photos are made smaller and kept on the phone, with the
+  time they were taken and nothing else: no weather or tide.
 - **Routes:** points put down at the crosshair, with each leg's bearing, distance, time and the
   least depth along it from your depth layers; saved by name, reversed, and out as GPX. For
   planning: the app does not steer along a route or sound alarms.
@@ -211,7 +221,7 @@ signal the chart is your depths and saved satellite on a plain background.
 - **Go to coordinates:** tap the position at the top and type one in, in degrees and minutes,
   degrees, minutes and seconds, or decimal degrees.
 - **GPX in and out,** to move waypoints and routes between SeaBathy, a plotter and other apps.
-- **Backup:** waypoints, routes and settings in one file, and back from it.
+- **Backup:** waypoints with their photos, routes and settings in one file, and back from it.
 - **GPS:** the boat on the chart and in 3D, with speed, course and accuracy, and a follow mode.
 - **Your own files:** GeoTIFF depth surveys and PMTiles charts.
 - **Marine park zones, reef and island names and boat ramps** round Australia, each with a
@@ -399,7 +409,7 @@ number.
 | OpenStreetMap | © OpenStreetMap contributors | ODbL. Shown as you look at it only: its tile servers do not allow saving offline, and the app does not offer it |
 | OpenTopoMap | Map data: © OpenStreetMap contributors, SRTM. Map style: © OpenTopoMap | CC-BY-SA. Asks for no bulk downloads; not saved offline |
 | USGS Imagery | USGS The National Map | US public domain |
-| Sentinel-2 satellite | EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024) | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/): non-commercial use, keep the credit. The one map offered for saving offline, at a gentle pace |
+| Sentinel-2 satellite | EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2024) | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/): non-commercial use, keep the credit. Offered for saving offline, at a gentle pace |
 | Latest true colour | NASA Global Imagery Browse Services (GIBS), part of NASA's ESDIS | NASA data, credit requested |
 
 The depths are shown resampled and coloured by SeaBathy, and a bigger area comes as a coarser

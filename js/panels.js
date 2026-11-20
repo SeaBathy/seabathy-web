@@ -9,6 +9,7 @@ import * as waypoints from './waypoints.js';
 import { setting } from './db.js';
 import { PALETTES, drawLegend, normalised, MAX_HILLSHADE_EXAGGERATION, SLOPE_MAXES, DEFAULT_SLOPE_MAX, setShallowMark, getShallowMark } from './depth.js';
 import * as contours from './contours.js';
+import { pickArea } from './areapicker.js';
 import { add, el, toast, openSheet, refreshSheet, topSheet, backFrom, closeSheet, row, button, field, heading, note, toggle, slider, confirmCard, progressCard, holdScreenOn, card, openDrawer, closeDrawer, refreshDrawer, mini, chooser } from './ui.js';
 import { openAbout, openInstall, canInstall } from './install.js';
 import * as seabed from './seabed.js';
@@ -263,7 +264,7 @@ function openBackup() {
     });
     const gpx = waypoints.gpxPicker();
     add(body,
-      note('A backup holds your waypoints, routes and settings in one file. Depth layers and saved map areas are not in it: they can be downloaded again.'),
+      note('A backup holds your waypoints with their photos, your routes and your settings in one file. Depth layers and saved map areas are not in it: they can be downloaded again.'),
       row('Back up now', 'Save a backup file where you choose', () => backup.save(VERSION), { id: 'backup-save' }),
       row('Restore a backup', 'From a SeaBathy web app backup file', () => restore.click(), { id: 'backup-restore' }),
       restore,
@@ -568,6 +569,13 @@ function savable() {
       fetchTile: (z, x, y, signal) => basemap.fetchSatellite(sat, z, x, y, signal)
     });
   }
+  // The person's own map link, when it is the basemap: theirs to save, on their own say-so.
+  if (basemap.state.basemap === 'custom' && basemap.state.customUrl) {
+    out.push({
+      source: basemap.customSource(), label: 'Your own map', own: true, minZoom: 0, maxZoom: 19,
+      fetchTile: (z, x, y, signal) => basemap.fetchCustom(z, x, y, signal)
+    });
+  }
   for (const chart of charts.list()) {
     if (chart.where !== 'remote' || chart.visible === false) continue;
     out.push({
@@ -578,12 +586,81 @@ function savable() {
   return out;
 }
 
+/** The zoom at which a box about fills a phone's screen. */
+const fitZoom = (box) => Math.floor(Math.log2((360 * 390) / (256 * Math.max(box.east - box.west, 1e-6))));
+
+/**
+ * Saving maps for use with no signal, as depths are got: the person draws the area on the
+ * chart, picks how much detail, sees how big that is, then it is fetched and kept.
+ */
+async function chooseOfflineArea(chosen) {
+  closeSheet();
+  const top = Math.max(...chosen.map((c) => c.maxZoom));
+  const least = Math.min(top, 3);
+  let detail = Math.min(top, Math.max(8, Math.min(Math.floor(map.getZoom()) + 2, 15)));
+  let again = () => {};
+  const shown = el('span', { class: 'area-extra-value', id: 'offline-detail', text: `Zoom ${detail}` });
+  const step = (by) => {
+    detail = Math.max(least, Math.min(top, detail + by));
+    shown.textContent = `Zoom ${detail}`;
+    again();
+  };
+  const extra = el('div', { class: 'area-extra' },
+    el('span', { class: 'area-extra-label', text: 'DETAIL' }),
+    mini('−', () => step(-1), { id: 'offline-less', title: 'Less detail: fewer tiles' }),
+    shown,
+    mini('+', () => step(1), { id: 'offline-more', title: 'More detail: many more tiles' }));
+  /** The zooms to save for one map: from a little further out than the box, in to the detail picked. */
+  const range = (c, box) => [Math.max(c.minZoom, Math.min(c.maxZoom, fitZoom(box) - 2), 0), Math.min(c.maxZoom, detail)];
+  const boundsOf = (box) => [box.west, box.south, box.east, box.north];
+  const total = (box) => chosen.reduce((sum, c) => {
+    const [a, b] = range(c, box);
+    return sum + (b >= a ? offline.count(boundsOf(box), a, b) : 0);
+  }, 0);
+  const box = await pickArea(map, {
+    title: 'OFFLINE MAP', maxKm: 2000, confirmLabel: 'Save area', extra, onReady: (picker) => { again = picker.again; },
+    describe: (drawn) => {
+      const tiles = total(drawn);
+      if (tiles > offline.MAX_TILES) {
+        return { text: `${tiles.toLocaleString()} tiles is too many for one save (the most is ${offline.MAX_TILES.toLocaleString()}). Draw a smaller box, or pick less detail.`, ok: false };
+      }
+      if (!tiles) return { text: 'Nothing to save at this detail.', ok: false };
+      return `${plural(tiles, 'tile')}, roughly ${files.formatBytes(tiles * 22000)}. Saved at a gentle pace: ${tiles <= 1000 ? 'under a minute' : `about ${Math.ceil(tiles / 20 / 60)} min`}.`;
+    }
+  });
+  if (!box) return;
+  const bounds = boundsOf(box);
+  const progress = progressCard('Saving the area', 'Keep SeaBathy open and on screen until this finishes.');
+  const letSleep = await holdScreenOn();
+  let done = 0;
+  let failed = 0;
+  try {
+    for (const c of chosen) {
+      const [minZoom, maxZoom] = range(c, box);
+      if (maxZoom < minZoom) continue;
+      const pack = await offline.download({
+        source: c.source, label: c.label, bounds, minZoom, maxZoom, fetchTile: c.fetchTile, signal: progress.signal,
+        onProgress: (n, of, bytes) => progress.set(n / of, `${c.label}: ${n.toLocaleString()} of ${of.toLocaleString()} tiles · ${files.formatBytes(bytes)}`)
+      });
+      done += pack.tiles;
+      failed += pack.failed;
+    }
+    progress.close();
+    await files.keep();
+    toast(failed ? `Saved ${plural(done, 'tile')}. ${plural(failed, 'tile')} couldn't be fetched: save the area again to fill them in.` : `Saved ${plural(done, 'tile')} for use with no signal.`, 6000);
+  } catch (error) {
+    progress.close();
+    if (progress.signal.aborted || files.isCancel(error)) toast('Stopped. Nothing from this save was kept.');
+    else if (files.isFull(error)) toast('The phone ran out of space. Nothing from this save was kept.', 7000);
+    else toast(error.message || "Couldn't save the area.", 7000);
+  } finally {
+    letSleep();
+  }
+}
+
 function openOffline() {
   openSheet('Offline maps', (body) => {
     const choices = savable();
-    const view = map.getBounds();
-    const bounds = [view.getWest(), view.getSouth(), view.getEast(), view.getNorth()];
-    const here = Math.floor(map.getZoom());
     const saved = offline.list();
     const savedRows = saved.length
       ? [heading('SAVED AREAS'), ...[...saved].reverse().map((p) => row(p.label, `${plural(p.tiles, 'tile')} · ${files.formatBytes(p.bytes)} · zoom ${p.minZoom} to ${p.maxZoom}`, async () => {
@@ -592,68 +669,27 @@ function openOffline() {
         refreshSheet();
       }, { value: 'Delete', danger: true }))]
       : [];
+    const cannot = note("The built-in street maps can't be saved: the people who run them don't allow it. Your own map link can be, and so can the satellite picture.");
     if (!choices.length) {
-      add(body, 
+      add(body,
         note('Charts and surveys you load from the Files app already work with no signal.'),
-        note('To save more, turn on the satellite picture in Layers, or add a chart from a web address (Settings, Depths), move the chart to the area you want, then come back here.'),
+        note('To save more, turn on the satellite picture in Layers, choose your own map link as the basemap (Online map layers), or add a chart from a web address (Settings, Depths). Then come back here.'),
+        cannot,
         savedRows);
       return;
     }
-    const top = Math.max(...choices.map((c) => c.maxZoom));
-    let detail = Math.min(top, Math.max(here, Math.min(here + 2, 15)));
     const picked = new Set(choices.map((c) => c.source));
-    const summary = el('p', { class: 'note', id: 'offline-summary' });
-    const go = button('Save this area', () => run(), { primary: true, id: 'offline-save' });
-    /** The zooms to save for one map: from a little further out than the screen, in to the detail picked. */
-    const range = (c) => [Math.max(c.minZoom, Math.min(c.maxZoom, here - 3), 0), Math.min(c.maxZoom, detail)];
-    const total = () => choices.filter((c) => picked.has(c.source)).reduce((sum, c) => {
-      const [a, b] = range(c);
-      return sum + (b >= a ? offline.count(bounds, a, b) : 0);
-    }, 0);
-    const update = () => {
-      const tiles = total();
-      go.disabled = tiles === 0 || tiles > offline.MAX_TILES;
-      summary.textContent = tiles > offline.MAX_TILES
-        ? `${tiles.toLocaleString()} tiles is too many for one save (the most is ${offline.MAX_TILES.toLocaleString()}). Zoom in, or pick less detail.`
-        : tiles === 0 ? 'Pick at least one map.' : `${plural(tiles, 'tile')}, roughly ${files.formatBytes(tiles * 22000)}. Saved at a gentle pace: ${tiles <= 1000 ? 'under a minute' : `about ${Math.ceil(tiles / 20 / 60)} min`}.`;
-    };
-    const run = async () => {
-      const progress = progressCard('Saving the area', 'Keep SeaBathy open and on screen until this finishes.');
-      const letSleep = await holdScreenOn();
-      let done = 0;
-      let failed = 0;
-      try {
-        for (const c of choices.filter((x) => picked.has(x.source))) {
-          const [minZoom, maxZoom] = range(c);
-          if (maxZoom < minZoom) continue;
-          const pack = await offline.download({
-            source: c.source, label: c.label, bounds, minZoom, maxZoom, fetchTile: c.fetchTile, signal: progress.signal,
-            onProgress: (n, of, bytes) => progress.set(n / of, `${c.label}: ${n.toLocaleString()} of ${of.toLocaleString()} tiles · ${files.formatBytes(bytes)}`)
-          });
-          done += pack.tiles;
-          failed += pack.failed;
-        }
-        progress.close();
-        await files.keep();
-        toast(failed ? `Saved ${plural(done, 'tile')}. ${plural(failed, 'tile')} couldn't be fetched: save the area again to fill them in.` : `Saved ${plural(done, 'tile')} for use with no signal.`, 6000);
-        refreshSheet();
-      } catch (error) {
-        progress.close();
-        if (progress.signal.aborted || files.isCancel(error)) toast('Stopped. Nothing from this save was kept.');
-        else if (files.isFull(error)) toast('The phone ran out of space. Nothing from this save was kept.', 7000);
-        else toast(error.message || "Couldn't save the area.", 7000);
-      } finally {
-        letSleep();
-      }
-    };
-    update();
-    add(body, 
-      note('Saves the area now on screen. Move and zoom the chart first if this is not the area you want.'),
+    const go = button('Choose area', () => chooseOfflineArea(choices.filter((c) => picked.has(c.source))), { primary: true, id: 'offline-choose' });
+    add(body,
+      note('Pick what to save, then draw the area on the chart, as for seabed depths. It is kept on this phone for use with no signal.'),
       heading('WHAT TO SAVE'),
-      choices.map((c) => toggle(c.label, null, true, (on) => { if (on) picked.add(c.source); else picked.delete(c.source); update(); })),
-      slider('Detail', { min: Math.min(here, top), max: top, step: 1, value: detail, format: (v) => `Zoom ${v}`, onInput: (v) => { detail = v; update(); }, id: 'offline-detail' }),
-      summary,
+      choices.map((c) => toggle(c.label, c.own ? 'From the link you gave' : null, true, (on) => {
+        if (on) picked.add(c.source); else picked.delete(c.source);
+        go.disabled = !picked.size;
+      })),
+      choices.some((c) => c.own) ? note("You're responsible for having the right to save your own map offline: check its licence.") : null,
       el('div', { class: 'actions' }, go),
+      cannot,
       savedRows);
   });
 }

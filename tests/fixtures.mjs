@@ -4,6 +4,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
 import path from 'node:path';
 import { buildTiff, buildUtmTiff, buildAlbersTiff, surveyDepth as depthOf } from './surveys.mjs';
 
@@ -169,6 +170,99 @@ export async function checkPmtiles(bytes) {
 /** The longitude-and-latitude survey's depth at a longitude. */
 export const surveyDepth = (lng) => depthOf(AREA, lng);
 
+// ---------------------------------------------------------------- a photo, and a map tile
+
+/**
+ * A JPEG with the notes a camera writes in it: where and when it was taken ([lat], [lng],
+ * [when], a Date), and with [turned] that the camera was held on its side.
+ */
+export function withExif(jpeg, { lat, lng, when, turned = false }) {
+  const first = turned ? 3 : 2;
+  const cameraAt = 8 + 2 + first * 12 + 4;
+  const gpsAt = cameraAt + 2 + 2 * 12 + 4 + 28;
+  const gpsData = gpsAt + 2 + 6 * 12 + 4;
+  const tiff = Buffer.alloc(gpsData + 24 * 3 + 12);
+  let at = 0;
+  const u16 = (v) => { tiff.writeUInt16LE(v, at); at += 2; };
+  const u32 = (v) => { tiff.writeUInt32LE(v, at); at += 4; };
+  const entry = (tag, type, count, value) => { u16(tag); u16(type); u32(count); u32(value); };
+  const text = (where, said) => { tiff.write(said, where, 'latin1'); };
+  const fractions = (where, values) => values.forEach(([above, below], i) => { tiff.writeUInt32LE(above, where + i * 8); tiff.writeUInt32LE(below, where + i * 8 + 4); });
+  const dms = (value) => {
+    const abs = Math.abs(value);
+    const degrees = Math.floor(abs);
+    const minutes = Math.floor((abs - degrees) * 60);
+    return [[degrees, 1], [minutes, 1], [Math.round(((abs - degrees) * 60 - minutes) * 60 * 10000), 10000]];
+  };
+  const two = (n) => String(n).padStart(2, '0');
+  // The camera's own clock ran ten hours ahead of the satellites' (Queensland).
+  const local = new Date(when.getTime() + 10 * 3600000);
+  tiff.write('II', 0, 'latin1');
+  at = 2;
+  u16(42);
+  u32(8);
+  u16(first);
+  if (turned) entry(0x0112, 3, 1, 6);
+  entry(0x8769, 4, 1, cameraAt);
+  entry(0x8825, 4, 1, gpsAt);
+  u32(0);
+  u16(2);
+  entry(0x9003, 2, 20, cameraAt + 30);
+  entry(0x9011, 2, 7, cameraAt + 50);
+  u32(0);
+  text(cameraAt + 30, `${local.getUTCFullYear()}:${two(local.getUTCMonth() + 1)}:${two(local.getUTCDate())} ${two(local.getUTCHours())}:${two(local.getUTCMinutes())}:${two(local.getUTCSeconds())}`);
+  text(cameraAt + 50, '+10:00');
+  at = gpsAt;
+  u16(6);
+  entry(1, 2, 2, lat < 0 ? 0x53 : 0x4e);
+  entry(2, 5, 3, gpsData);
+  entry(3, 2, 2, lng < 0 ? 0x57 : 0x45);
+  entry(4, 5, 3, gpsData + 24);
+  entry(7, 5, 3, gpsData + 48);
+  entry(29, 2, 11, gpsData + 72);
+  u32(0);
+  fractions(gpsData, dms(lat));
+  fractions(gpsData + 24, dms(lng));
+  fractions(gpsData + 48, [[when.getUTCHours(), 1], [when.getUTCMinutes(), 1], [when.getUTCSeconds(), 1]]);
+  text(gpsData + 72, `${when.getUTCFullYear()}:${two(when.getUTCMonth() + 1)}:${two(when.getUTCDate())}`);
+  const head = Buffer.alloc(10);
+  head.writeUInt16BE(0xffe1, 0);
+  head.writeUInt16BE(2 + 6 + tiff.length, 2);
+  head.write('Exif', 4, 'latin1');
+  return Buffer.concat([jpeg.subarray(0, 2), head, tiff, jpeg.subarray(2)]);
+}
+
+const CRC = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (bytes) => {
+  let c = 0xffffffff;
+  for (const b of bytes) c = CRC[(c ^ b) & 255] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+/** A map tile of one colour, as a PNG. */
+export function pngTile([r, g, b], size = 256) {
+  const row = Buffer.alloc(1 + size * 3);
+  for (let i = 0; i < size; i++) row.set([r, g, b], 1 + i * 3);
+  const part = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const whole = Buffer.alloc(body.length + 8);
+    whole.writeUInt32BE(data.length, 0);
+    body.copy(whole, 4);
+    whole.writeUInt32BE(crc32(body), body.length + 4);
+    return whole;
+  };
+  const head = Buffer.alloc(13);
+  head.writeUInt32BE(size, 0);
+  head.writeUInt32BE(size, 4);
+  head[8] = 8;
+  head[9] = 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), part('IHDR', head), part('IDAT', deflateSync(Buffer.concat(Array.from({ length: size }, () => row)))), part('IEND', Buffer.alloc(0))]);
+}
+
 /** Writes the test files into [dir] and answers with their paths. */
 export async function writeFixtures(dir) {
   mkdirSync(dir, { recursive: true });
@@ -186,5 +280,7 @@ export async function writeFixtures(dir) {
   writeFileSync(path.join(dir, 'seabed-service'), tiff);
   const albers = await buildAlbersTiff(AREA);
   writeFileSync(path.join(dir, 'high-detail-service'), albers.bytes);
+  // The one tile the tests' stand-in for a person's own map server sends for every tile asked.
+  writeFileSync(path.join(dir, 'tile.png'), pngTile([40, 110, 160]));
   return { ...files, tiles: chart.tiles, utmProbe: utm.probe, albersProbe: albers.probe, albersMiddle: albers.middle };
 }

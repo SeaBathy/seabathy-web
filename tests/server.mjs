@@ -38,9 +38,11 @@ export function certificate() {
 /**
  * Serves the files under [root] on [port]. [cors] lets pages from other sites read them. A
  * path put in [swap] ('/sw.js', say) is answered with the text given there instead of the file:
- * that is how the tests put a newer version of the app on the server.
+ * that is how the tests put a newer version of the app on the server. Every path that starts
+ * with a key of [any] ('/xyz/', say) is answered with the one file named there: a map server
+ * that has a tile for whatever is asked.
  */
-export async function serve({ root, port, cors = false, swap = new Map() }) {
+export async function serve({ root, port, cors = false, swap = new Map(), any = new Map() }) {
   const answer = (request, response) => {
     const headers = { 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes' };
     if (cors) {
@@ -57,6 +59,7 @@ export async function serve({ root, port, cors = false, swap = new Map() }) {
     try {
       const wanted = decodeURIComponent(new URL(request.url, 'https://localhost').pathname);
       file = path.resolve(root, `.${wanted}`);
+      for (const [start, instead] of any) if (wanted.startsWith(start)) file = instead;
     } catch {
       file = null;
     }

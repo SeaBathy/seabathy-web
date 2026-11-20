@@ -29,6 +29,21 @@ export function subscribe(fn) {
   return () => listeners.delete(fn);
 }
 
+/**
+ * Where the phone is now: { lat, lng }, or null when it can't say (location not allowed, or no
+ * fix in time). The boat's last position when the GPS is on; else the phone is asked once.
+ */
+export function here() {
+  if (isOn() && last) return Promise.resolve({ lat: last.coords.latitude, lng: last.coords.longitude });
+  if (!navigator.geolocation) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 });
+  });
+}
+
 /** Turns the GPS on if it is off (the 3D view asks for the boat). */
 export function turnOn() {
   if (!isOn()) start();

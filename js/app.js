@@ -23,6 +23,8 @@ import * as marks from './marks.js';
 import * as depth from './depth.js';
 import * as contours from './contours.js';
 import * as survey from './survey.js';
+import * as photos from './photos.js';
+import * as backup from './backup.js';
 import { $, card, toast, wireSheet, sheetIsOpen, drawerIsOpen } from './ui.js';
 
 const HOLD_MS = 600;
@@ -182,7 +184,7 @@ async function boot() {
   });
 
   // For the tests, and for looking into a problem from the browser's console.
-  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, places, units, tools, routes, marks, depth, contours, survey, version: install.VERSION };
+  window.seabathy = { map, charts, waypoints, offline, basemap, files, db, gps, terrain, seabed, updates, places, units, tools, routes, marks, depth, contours, survey, photos, backup, version: install.VERSION };
   document.body.classList.add('ready');
   sessionStorage.removeItem('startTries');
 

@@ -1,4 +1,4 @@
-// A backup in one file: the waypoints, the saved routes and the settings. Depth layers and saved
+// A backup in one file: the waypoints with their photos, the saved routes and the settings. Depth layers and saved
 // map areas are left out: they are big and can be downloaded again. The file is made and read
 // here on the device and goes nowhere by itself: the person saves it or shares it.
 //
@@ -8,6 +8,7 @@
 import * as db from './db.js';
 import * as waypoints from './waypoints.js';
 import * as routes from './routes.js';
+import * as photos from './photos.js';
 import { saveFile } from './ui.js';
 
 export const FORMAT = 1;
@@ -21,11 +22,23 @@ export async function build(version) {
     const value = await db.setting.get(name, undefined);
     if (value !== undefined && value !== null) settings[name] = value;
   }
+  // The photos themselves, as text, by the id each waypoint lists them under.
+  const kept = {};
+  for (const waypoint of waypoints.list()) {
+    for (const photo of waypoint.photos || []) {
+      const text = await photos.toText(photo.id).catch(() => null);
+      if (text) kept[photo.id] = text;
+    }
+  }
   return {
     app: APP, format: FORMAT, version, created: new Date().toISOString(),
-    waypoints: waypoints.list().map(({ id, name, lat, lng, color, desc, icon, created }) => ({ id, name, lat, lng, color, desc, icon, created })),
+    waypoints: waypoints.list().map(({ id, name, lat, lng, color, desc, icon, created, photos: taken }) => ({
+      id, name, lat, lng, color, desc, icon, created,
+      ...(taken?.length ? { photos: taken.filter((p) => kept[p.id]).map((p) => ({ id: p.id, taken: p.taken })) } : {})
+    })),
     routes: routes.list().map(({ id, name, points, created }) => ({ id, name, points, created })),
-    settings
+    settings,
+    photos: kept
   };
 }
 
@@ -59,7 +72,16 @@ export function read(text) {
  * and, when [withSettings], its settings in place of this device's. Answers what was done.
  */
 export async function restore(backup, { withSettings = false } = {}) {
-  const marks = await waypoints.addAll(backup.waypoints);
+  const marks = await waypoints.addAll(backup.waypoints, async (photo) => {
+    const text = backup.photos?.[photo?.id];
+    if (typeof text !== 'string') return null;
+    try {
+      const made = await photos.fromText(text);
+      return { id: made.id, taken: Number(photo.taken) || Date.now(), bytes: made.bytes };
+    } catch {
+      return null;
+    }
+  });
   const kept = await routes.addAll(Array.isArray(backup.routes) ? backup.routes : []);
   let settings = 0;
   if (withSettings && backup.settings && typeof backup.settings === 'object') {
