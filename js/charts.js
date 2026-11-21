@@ -534,8 +534,11 @@ export async function surveyDepthAt(lng, lat) {
   return null;
 }
 
-/** The credits of the charts now shown. */
-export const credits = () => charts.filter((c) => c.visible !== false && c.attribution).map((c) => c.attribution);
+/**
+ * The credits of the charts now shown, one for each source: a layer put together from several
+ * sources (high detail outside Australia) holds all of theirs, joined by " • ".
+ */
+export const credits = () => charts.filter((c) => c.visible !== false && c.attribution).flatMap((c) => c.attribution.split(' • '));
 
 /** Starts the charts: reads the saved list and gets ready to draw them. */
 export async function start(theMap, theHooks) {

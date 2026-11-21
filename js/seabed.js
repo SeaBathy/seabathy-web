@@ -1,6 +1,6 @@
 // Free seabed depths, fetched by the app itself and kept on the phone, as in the Android and
-// Desktop apps. Two sources, both asked for an area the person draws on the chart and both
-// answering with a GeoTIFF that then works like any survey, offline and in 3D:
+// Desktop apps. The person draws an area on the chart, and what arrives is a GeoTIFF that then
+// works like any survey, offline and in 3D:
 //
 // - Worldwide: GMRT (Global Multi-Resolution Topography, CC BY 4.0), which blends ship surveys
 //   with the GEBCO grid. Its server picks the finest detail that fits about 55 MB.
@@ -8,9 +8,13 @@
 //   2026, CC BY 4.0), 10 m on the shelf. IMAS's own map server cuts the area out and sends
 //   it (a WCS GetCoverage request), so nothing sits between the phone and IMAS. The Android
 //   app reads the same composite from IMAS's files, which a web page is not allowed to do.
+// - High detail elsewhere: the USA, Canada, Europe, New Zealand and the Pacific islands, each
+//   from its own maker's server, with GMRT under them for what they don't cover. The phone
+//   puts them together into one GeoTIFF (see overseas.js).
 
 import * as charts from './charts.js';
 import * as files from './files.js';
+import * as overseas from './overseas.js';
 import { pickArea } from './areapicker.js';
 import { card, el, toast, progressCard, holdScreenOn, closeSheet, loadScript } from './ui.js';
 
@@ -35,6 +39,7 @@ const ALBERS = '+proj=aea +lat_0=0 +lon_0=132 +lat_1=-18 +lat_2=-36 +x_0=0 +y_0=
 /**
  * The most cells one high-detail download holds: about 30 km square at the full 10 m, and a
  * file of 20 MB or so. A bigger area is thinned by IMAS's server to fit, so it comes coarser.
+ * The same limit holds outside Australia.
  */
 const HIGH_DETAIL_CELLS = 9_000_000;
 const BYTES_PER_CELL = 2.4;
@@ -45,9 +50,15 @@ const servers = {
   imas: 'https://geoserver.imas.utas.edu.au/geoserver/bathy_composites/wcs'
 };
 
-/** Points a download at another address that answers the same way. The tests use their own. */
+/**
+ * Points a download at another address that answers the same way. The tests use their own.
+ * [which] is gmrt, imas, or one of the high-detail sources outside Australia (noaa, nonna,
+ * emodnet, linz, dep).
+ */
 export function useServer(url, which = 'gmrt') {
-  servers[which] = url;
+  if (which in servers) servers[which] = url;
+  overseas.useServer(which, url);
+  overseas.forgetLists();
 }
 
 /**
@@ -93,6 +104,9 @@ export const seabedUrl = (a) => `${servers.gmrt}?` +
 /** True when [area] takes in Australian waters, where the high-detail composite is. */
 export const inAustralianWaters = (area) =>
   area.east > AUSTRALIA.west && area.west < AUSTRALIA.east && area.north > AUSTRALIA.south && area.south < AUSTRALIA.north;
+
+/** True when any of [area] (the chart on screen) is somewhere high detail can be had. */
+export const highDetailNear = (area) => inAustralianWaters(area) || overseas.touchesOverseas(area);
 
 /** [area], or its middle [HIGH_DETAIL_SPAN_KM] each way when it is bigger. */
 export function highDetailArea(area) {
@@ -222,39 +236,58 @@ async function ask(url, who, check, progress, asking) {
   }
 }
 
-async function download({ url, name, title, credit, asking, noData, who, check }) {
+/**
+ * Downloads a GeoTIFF that a server cuts out on request, and answers its bytes in pieces.
+ * [noData] is what to say when the server sends words instead of a file. A server that is
+ * busy is asked once more when [again] is set.
+ */
+async function receive(url, { who, check = null, progress, asking, noData, again = false }) {
+  progress.set(null, asking);
+  const response = await ask(url, who, check, progress, asking);
+  if ((response.status === 429 || response.status >= 500) && again) {
+    progress.set(null, `${capital(who)} is busy. Trying once more…`);
+    await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS * 2));
+    if (progress.signal.aborted) throw new Error('Cancelled');
+    return receive(url, { who, check, progress, asking, noData });
+  }
+  if (response.status === 429 || response.status >= 500) throw new Told(`${capital(who)} is busy or having trouble just now (it answered ${response.status}). Try again in a few minutes.`);
+  // A map server explains a refusal in the body of a "400"; anything else is a failure.
+  if (!response.ok && response.status !== 400) throw new Told(`${capital(who)} answered ${response.status}, not the depths. Try again later.`);
+  const parts = [];
+  let got = 0;
+  try {
+    const reader = response.body?.getReader();
+    if (reader) {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value);
+        got += value.length;
+        progress.set(null, `Downloading the depths: ${files.formatBytes(got)}`);
+      }
+    } else {
+      parts.push(new Uint8Array(await response.arrayBuffer()));
+    }
+  } catch (error) {
+    if (progress.signal.aborted) throw error;
+    throw new Told(`The download from ${who} was cut off part-way (${files.formatBytes(got)} had arrived). Check the connection and try again.`, { check });
+  }
+  if (!parts.length || !looksLikeTiff(parts[0])) {
+    const said = parts.length ? serverSaid(parts[0]) : '';
+    throw new Told(/too (big|large)|exceed|limit/i.test(said) ? 'That area is more than the depth service will send at once. Draw a smaller box and try again.' : noData);
+  }
+  return parts;
+}
+
+/**
+ * Runs [work] under a progress card, then keeps the GeoTIFF it makes as a depth layer and shows
+ * it. [work](progress) answers { file, credit }. Any failure is explained, and nothing is kept.
+ */
+async function fetchAndKeep(title, noData, work) {
   const progress = progressCard(title, 'Keep SeaBathy open and on screen until this finishes.');
   const letSleep = await holdScreenOn();
   try {
-    progress.set(null, asking);
-    const response = await ask(url, who, check, progress, asking);
-    if (response.status === 429 || response.status >= 500) throw new Told(`${capital(who)} is busy or having trouble just now (it answered ${response.status}). Try again in a few minutes.`);
-    // A map server explains a refusal in the body of a "400"; anything else is a failure.
-    if (!response.ok && response.status !== 400) throw new Told(`${capital(who)} answered ${response.status}, not the depths. Try again later.`);
-    const parts = [];
-    let got = 0;
-    try {
-      const reader = response.body?.getReader();
-      if (reader) {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          parts.push(value);
-          got += value.length;
-          progress.set(null, `Downloading the depths: ${files.formatBytes(got)}`);
-        }
-      } else {
-        parts.push(new Uint8Array(await response.arrayBuffer()));
-      }
-    } catch (error) {
-      if (progress.signal.aborted) throw error;
-      throw new Told(`The download from ${who} was cut off part-way (${files.formatBytes(got)} had arrived). Check the connection and try again.`, { check });
-    }
-    if (!parts.length || !looksLikeTiff(parts[0])) {
-      const said = parts.length ? serverSaid(parts[0]) : '';
-      throw new Told(/too (big|large)|exceed|limit/i.test(said) ? 'That area is more than the depth service will send at once. Draw a smaller box and try again.' : noData);
-    }
-    const file = new File(parts, `${name}.tif`, { type: 'image/tiff' });
+    const { file, credit } = await work(progress);
     let chart;
     try {
       // Its values are heights: negative under water, positive on land, whatever the area holds.
@@ -297,15 +330,24 @@ async function download({ url, name, title, credit, asking, noData, who, check }
   }
 }
 
+/** One GeoTIFF, cut out and sent by a server, kept as it comes. */
+async function download({ url, name, title, credit, asking, noData, who, check }) {
+  await fetchAndKeep(title, noData, async (progress) => {
+    const parts = await receive(url, { who, check, progress, asking, noData });
+    return { file: new File(parts, `${name}.tif`, { type: 'image/tiff' }), credit };
+  });
+}
+
 /**
  * Depths already on the phone, from the same source, that cover [area] at about the same
  * detail. Both services give a smaller area finer detail, so asking for well under what is
- * held is a new download.
+ * held is a new download. [credit] is the layer's credit, or a test of it.
  */
 function alreadyHeld(area, credit) {
+  const same = typeof credit === 'function' ? credit : (attribution) => attribution === credit;
   const span = Math.max(area.north - area.south, area.east - area.west);
   return charts.list().find((c) => {
-    if (c.attribution !== credit) return false;
+    if (!same(c.attribution || '')) return false;
     const [west, south, east, north] = c.bounds;
     const held = Math.max(north - south, east - west);
     const slack = held * 0.02;
@@ -358,6 +400,124 @@ async function getHighDetail(area, plan) {
   });
 }
 
+// ---------------------------------------------------------------- high detail elsewhere
+
+const NO_HIGH_DETAIL = 'No high-detail depths here. Cancel and choose Worldwide.';
+/** The finer sources' credits: a layer holding any of them is high detail from outside Australia. */
+const OVERSEAS_CREDITS = Object.entries(overseas.SOURCES).filter(([id]) => id !== 'gmrt').map(([, s]) => s.credit);
+
+/** A fetch that gives up after [ms], for the quick questions asked while the box is drawn. */
+async function quickFetch(url, ms = 20000) {
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), ms);
+  try {
+    const response = await fetch(url, { signal: stop.signal });
+    if (!response.ok) throw new Error(`${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function libraries() {
+  await loadScript('vendor/geotiff.js');
+  await loadScript('vendor/proj4.js');
+  return { GeoTIFF: globalThis.GeoTIFF, proj4: globalThis.proj4 };
+}
+
+/** What overseas.js fetches with while a download runs: every failure is told plainly. */
+function downloadNet(progress, { GeoTIFF, proj4 }) {
+  const cutOff = (who, error) => new Told(`The download from ${who} was cut off part-way. Check the connection and try again.`,
+    { detail: `The browser said: ${String(error?.message || error).slice(0, 80)}.` });
+  /** A part-file read from a file store, with the same patience as any other request. */
+  async function part(url, init, who, signal) {
+    const waiting = new AbortController();
+    const timer = setTimeout(() => waiting.abort(), ANSWER_TIMEOUT_MS);
+    const stop = () => waiting.abort();
+    progress.signal.addEventListener('abort', stop, { once: true });
+    signal?.addEventListener('abort', stop, { once: true });
+    try {
+      const response = await fetch(url, { ...init, signal: waiting.signal });
+      if (response.status === 429 || response.status >= 500) throw new Told(`${capital(who)} is busy or having trouble just now (it answered ${response.status}). Try again in a few minutes.`);
+      if (!response.ok) throw new Told(`${capital(who)} answered ${response.status}, not the depths. Try again later.`);
+      return response;
+    } catch (error) {
+      if (progress.signal.aborted || error instanceof Told) throw error;
+      if (!navigator.onLine) throw new Told('This device is offline. The depths need the internet to download.');
+      if (waiting.signal.aborted) throw new Told(`${capital(who)} took too long to answer. It may be busy: try again in a few minutes, or draw a smaller box.`);
+      throw cutOff(who, error);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return {
+    GeoTIFF, proj4, signal: progress.signal,
+    progress: (fraction, text) => progress.set(fraction, text),
+    async json(url, who) {
+      const asking = 'Finding which depths cover this box…';
+      progress.set(null, asking);
+      const response = await ask(url, who, null, progress, asking);
+      if (response.status === 429 || response.status >= 500) throw new Told(`${capital(who)} is busy or having trouble just now (it answered ${response.status}). Try again in a few minutes.`);
+      if (!response.ok) throw new Told(`${capital(who)} answered ${response.status}. Try again later.`);
+      try {
+        return await response.json();
+      } catch (error) {
+        if (progress.signal.aborted) throw error;
+        throw cutOff(who, error);
+      }
+    },
+    async tiff(url, who) {
+      const parts = await receive(url, {
+        who, progress, asking: `Asking ${who}… this can take a minute`, again: true,
+        noData: `${capital(who)} sent no depths for this box. Try again later, or choose Worldwide.`
+      });
+      return new Blob(parts).arrayBuffer();
+    },
+    async range(url, headers, signal, who) {
+      const response = await part(url, { headers }, who, signal);
+      try {
+        return { status: response.status, headers: response.headers, data: await response.arrayBuffer() };
+      } catch (error) {
+        if (progress.signal.aborted) throw error;
+        throw cutOff(who, error);
+      }
+    },
+    async size(url, signal, who) {
+      return Number((await part(url, { method: 'HEAD' }, who, signal)).headers.get('content-length')) || 2 ** 40;
+    }
+  };
+}
+
+/** High detail outside Australia: the finer sources with GMRT under them, put together on the phone. */
+async function getOverseas(area, surveyed) {
+  const name = seabedName(area, 'High detail');
+  const fine = (attribution) => OVERSEAS_CREDITS.some((credit) => attribution.includes(credit));
+  const held = charts.list().find((x) => x.name === name) || alreadyHeld(area, fine);
+  if (held) {
+    await goTo(held);
+    return;
+  }
+  if (!navigator.onLine) {
+    toast('No internet: the seabed depths need a connection to download.');
+    return;
+  }
+  await fetchAndKeep('High-detail depths', 'There are no high-detail depths for this area. Try the worldwide depths.', async (progress) => {
+    progress.set(0, 'Finding which depths cover this box…');
+    const net = downloadNet(progress, await libraries());
+    // What was found while the box was drawn, unless a server couldn't be asked then.
+    const found = surveyed && !surveyed.unknown ? surveyed : await overseas.survey(area, net, { strict: true });
+    const plan = overseas.planFor(area, found.found, HIGH_DETAIL_CELLS);
+    if (!plan) throw new Told(`${found.place || 'Here'}: no high-detail depths in this box. Try the worldwide depths.`);
+    let made;
+    try {
+      made = await overseas.build(area, found.found, plan, net);
+    } catch (error) {
+      throw error instanceof overseas.NothingHere ? new Told(error.message) : error;
+    }
+    return { file: new File([made.blob], `${name}.tif`, { type: 'image/tiff' }), credit: made.credits.join(' • ') };
+  });
+}
+
 /** The area a box drawn on the chart asks for; never smaller than [minSpan] degrees each way. */
 const areaOfBox = (box, minSpan) =>
   seabedArea(box.south, box.west, box.north, box.east, (box.south + box.north) / 2, (box.west + box.east) / 2, minSpan);
@@ -371,29 +531,54 @@ async function pickWorldwide(map) {
   if (box) await getWorldwide(areaOfBox(box));
 }
 
-/** High detail: the person draws the area, sees the detail and size it means, then it downloads. */
+/**
+ * High detail: the person draws the area, sees where it is, what it will get and the size,
+ * then it downloads. In Australian waters it is the IMAS composite; elsewhere the finer
+ * sources there are asked what they hold in the box while it is drawn.
+ */
 async function pickHighDetail(map) {
+  // Loads the projection library too, which the sources outside Australia need while the box is drawn.
   const forward = await toAlbers();
   const areaOf = (box) => highDetailArea(areaOfBox(box, HIGH_DETAIL_MIN_SPAN_DEG));
+  const surveys = new Map();
+  const quiet = { proj4: globalThis.proj4, json: (url) => quickFetch(url) };
+  const surveyOf = (area) => {
+    const key = [area.west, area.south, area.east, area.north].map((v) => v.toFixed(5)).join(',');
+    if (!surveys.has(key)) surveys.set(key, overseas.survey(area, quiet));
+    return surveys.get(key);
+  };
+  let latest = 0;
   const box = await pickArea(map, {
     title: 'HIGH-DETAIL DEPTHS', maxKm: HIGH_DETAIL_SPAN_KM,
-    describe: (drawn) => {
+    describe: async (drawn) => {
       const area = areaOf(drawn);
-      if (!inAustralianWaters(area)) return { text: 'High detail covers Australian waters only. Move the box there, or cancel and choose Worldwide.', ok: false };
-      const plan = highDetailPlan(area, forward);
-      return plan.scale < 1
-        ? `About ${detailText(plan.detail)} detail, ${files.formatBytes(plan.bytes)}. A smaller box comes at the full 10 m.`
-        : `The full 10 m detail, about ${files.formatBytes(plan.bytes)}.`;
+      if (overseas.inAustralia(area)) {
+        const plan = highDetailPlan(area, forward);
+        return plan.scale < 1
+          ? `Australia: about ${detailText(plan.detail)} detail, ${files.formatBytes(plan.bytes)}. A smaller box comes at the full 10 m.`
+          : `Australia: the full 10 m detail, about ${files.formatBytes(plan.bytes)}.`;
+      }
+      if (!overseas.sourcesFor(area).length) return { text: NO_HIGH_DETAIL, ok: false };
+      // The servers are asked once the box has stopped changing.
+      const mine = ++latest;
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      if (mine !== latest) return { text: '', ok: false };
+      const found = await surveyOf(area);
+      const plan = overseas.planFor(area, found.found, HIGH_DETAIL_CELLS);
+      if (!plan) return { text: `${found.place}: no high-detail depths in this box. Cancel and choose Worldwide.`, ok: false };
+      return overseas.describe(found.place, found.found, plan, files.formatBytes);
     }
   });
   if (!box) return;
   const area = areaOf(box);
-  await getHighDetail(area, highDetailPlan(area, forward));
+  if (overseas.inAustralia(area)) await getHighDetail(area, highDetailPlan(area, forward));
+  else if (!overseas.sourcesFor(area).length) toast(NO_HIGH_DETAIL);
+  else await getOverseas(area, await surveyOf(area).catch(() => null));
 }
 
 /**
  * "Get seabed depths": says what will be downloaded and asks which depths (high detail where
- * Australia has it, or worldwide). The person then draws the area on the chart. Nothing is
+ * it is published, or worldwide). The person then draws the area on the chart. Nothing is
  * downloaded for what merely happens to be on screen.
  */
 export async function show(map) {
@@ -405,7 +590,7 @@ export async function show(map) {
   const worldwide = `Worldwide depths come from GMRT, which blends ship surveys with the global GEBCO grid: best where ships have surveyed, much coarser elsewhere. Up to about ${MAX_SPAN_KM} km across and 55 MB; a smaller area comes sharper.`;
   const next = 'Next you draw the area on the chart.';
 
-  if (!inAustralianWaters(onScreen)) {
+  if (!highDetailNear(onScreen)) {
     const answer = await card({
       title: 'Get seabed depths?', paragraphs: [intro, worldwide, next], fine: 'Not for navigation.', dismissable: true,
       actions: [{ id: 'no', label: 'Cancel' }, { id: 'world', label: 'Choose area', primary: true, domId: 'seabed-go' }]
@@ -420,7 +605,8 @@ export async function show(map) {
     title: 'Get seabed depths?',
     paragraphs: [
       intro,
-      `High detail: the IMAS composite of Australian waters, 10 m on the shelf, sent by IMAS's own server. Up to about ${HIGH_DETAIL_SPAN_KM} km across; an area up to about 30 km square comes at the full 10 m detail, a bigger one coarser.`,
+      'High detail: Australia: all waters, the IMAS composite at 10 m on the shelf. USA: all coasts, Hawaii and the US islands at about 3 m; Alaska in parts; the Great Lakes coarser. Canada: surveyed coasts and harbours. New Zealand: coasts surveyed by lidar since 2024, to about 25 m deep. Pacific islands: reef shallows to about 10 m, a satellite estimate. Europe: all seas, about 115 m. Elsewhere use Worldwide.',
+      `Each is sent by its maker's own server; outside Australia the worldwide depths fill the gaps. Up to about ${HIGH_DETAIL_SPAN_KM} km across, and a smaller box comes sharper: in Australia, up to about 30 km square at the full 10 m detail.`,
       worldwide,
       next
     ],

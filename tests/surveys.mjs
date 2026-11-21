@@ -165,3 +165,41 @@ export async function buildAlbersTiff(area) {
   const [lng, lat] = toAlbers.inverse([west + (col + 0.5) * cell, north - (row + 0.5) * cell]);
   return { bytes, probe: { lng, lat, depth: depthAt(west + (col + 0.5) * cell) }, middle: toAlbers.forward([(area.west + area.east) / 2, (area.south + area.north) / 2]) };
 }
+
+/** Where the tests' stand-ins for the depth servers outside Australia have depths: round Key West. */
+export const OVERSEAS = { west: -81.95, south: 24.35, east: -81.55, north: 24.75 };
+/** The stand-in GMRT's depth there: 30 m at the west edge, 1 m deeper every 0.01° east. */
+export const overseasCoarse = (lng) => -(30 + (lng - OVERSEAS.west) * 100);
+/** The stand-in NOAA's: a flat 4 m south of 24.55° N, and nothing north of it. */
+export const OVERSEAS_FINE = { depth: -4, north: 24.55, cell: 0.0001 };
+
+/**
+ * What the stand-ins for GMRT and for NOAA's coastal models send for any box round Key West:
+ * the worldwide depths sloping gently east, and NOAA's covering only the south half, with
+ * NOAA's empty-cell value (-99999) over the rest.
+ */
+export async function buildOverseasTiffs() {
+  const keys = [1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326];
+  const span = { x: OVERSEAS.east - OVERSEAS.west, y: OVERSEAS.north - OVERSEAS.south };
+  const coarseCell = 0.002;
+  const cw = Math.round(span.x / coarseCell);
+  const ch = Math.round(span.y / coarseCell);
+  const coarse = new Float32Array(cw * ch);
+  for (let r = 0; r < ch; r++) {
+    for (let c = 0; c < cw; c++) coarse[r * cw + c] = overseasCoarse(OVERSEAS.west + (c + 0.5) * coarseCell);
+  }
+  const gmrt = writeTiff(coarse, cw, ch, { scale: [coarseCell, coarseCell], origin: [OVERSEAS.west, OVERSEAS.north], keys }, -99999);
+  await checkTiff(gmrt, cw, [[10, 10, overseasCoarse(OVERSEAS.west + 10.5 * coarseCell)]], -99999);
+  const fineCell = 0.0005;
+  const fw = Math.round(span.x / fineCell);
+  const fh = Math.round(span.y / fineCell);
+  const fine = new Float32Array(fw * fh);
+  for (let r = 0; r < fh; r++) {
+    const lat = OVERSEAS.north - (r + 0.5) * fineCell;
+    fine.fill(lat < OVERSEAS_FINE.north ? OVERSEAS_FINE.depth : -99999, r * fw, (r + 1) * fw);
+  }
+  const noaa = writeTiff(fine, fw, fh, { scale: [fineCell, fineCell], origin: [OVERSEAS.west, OVERSEAS.north], keys }, -99999);
+  await checkTiff(noaa, fw, [[0, 0, -99999], [fh - 1, 0, OVERSEAS_FINE.depth]], -99999);
+  const query = JSON.stringify({ features: [{ attributes: { DemName: 'Test coastal model', Name: 'test', LowPS: OVERSEAS_FINE.cell, VerticalDatum: 'MHW' } }] });
+  return { gmrt, noaa, query };
+}

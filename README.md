@@ -1,7 +1,7 @@
 # SeaBathy web app
 
 ![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
-![Version 0.3.9](https://img.shields.io/badge/version-0.3.9-informational)
+![Version 0.4.0](https://img.shields.io/badge/version-0.4.0-informational)
 ![Works offline](https://img.shields.io/badge/works-offline-success)
 ![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
 
@@ -89,17 +89,35 @@ Nothing is downloaded until you have drawn the box and tapped Get depths.
 
 There are two kinds:
 
-- **High detail, in Australian waters.** The IMAS multi-resolution bathymetry composite, with
-  10 m detail on the continental shelf. The box you draw is cut out and sent by IMAS's own
-  map server. A box up to about 30 km square comes at the full 10 m; a bigger one, up to
-  110 km, comes coarser, so draw a small box for the spot that matters.
+- **High detail**, where it is published, up to 110 km across. A smaller box comes sharper, so
+  draw a small box for the spot that matters.
+
+  | Where | Depths | Detail |
+  |---|---|---|
+  | Australia, all waters | The IMAS multi-resolution bathymetry composite, cut out and sent by IMAS's own map server | 10 m on the continental shelf; a box up to about 30 km square comes at the full 10 m |
+  | USA: all coasts, Hawaii, Puerto Rico and the US Virgin Islands, Guam and the Northern Marianas, American Samoa; Alaska in parts; the Great Lakes | NOAA NCEI's coastal elevation models, cut out by NOAA's server | About 3 m on most coasts, 10 to 16 m on older models, about 90 m in the Great Lakes |
+  | Canada: surveyed coasts, harbours and channels | The Canadian Hydrographic Service's NONNA-10 surveys | About 10 to 15 m, where surveyed |
+  | New Zealand: coasts surveyed by lidar since 2024 | LINZ's coastal lidar (New Zealand Coastal LiDAR 1m DEM), read straight from LINZ's public files | Down to a few metres, near shore and to about 25 m deep |
+  | Pacific islands: Fiji, Papua New Guinea, Solomon Islands, Vanuatu, New Caledonia, Tonga, Samoa, Cook Islands, French Polynesia, Kiribati, Micronesia, Marshall Islands, Palau and more | Digital Earth Pacific's satellite-derived bathymetry, read straight from its public files | 10 m, reef shallows to about 10 m deep: an estimate from satellite pictures |
+  | Europe, all seas | EMODnet Digital Bathymetry (DTM 2024) | About 115 m |
+
+  Outside Australia the phone puts the finer depths over the worldwide ones, which fill
+  whatever the finer source doesn't cover (land, deeper water, unsurveyed patches), with a
+  short blend where they meet, and keeps the result as one layer. The bar under the box says
+  where it is and what it will get, for example "USA (Florida): NOAA, about 3 m detail; GMRT
+  fills the rest". Where none of these has depths it says so, and the worldwide depths are the
+  choice. One download holds at most about 9 million cells, as in Australia.
 - **Worldwide.** GMRT, a free model of the whole ocean built from ship surveys. It is sharpest
   where ships have surveyed and much coarser elsewhere. One download holds up to about 440 km
   across and 55 MB.
 
-The high-detail depths rely on a public IMAS server that this project does not run. If IMAS
-changes it, **High detail** stops working until the app is updated; depths already on the
-phone and the worldwide depths are not affected.
+The high-detail depths rely on public servers that this project does not run: IMAS's, NOAA's,
+the Canadian Hydrographic Service's, EMODnet's, and the public files of LINZ and Digital Earth
+Pacific. If one of them changes, **High detail** there stops working until the app is updated;
+depths already on the phone and the worldwide depths are not affected. Their depths are on
+different vertical datums (NOAA's mostly NAVD 88 or mean high water, LINZ's NZVD2016, the
+others about mean sea level) and are not corrected to one another: another reason they are not
+for navigation.
 
 ## Finding your way round
 
@@ -181,7 +199,8 @@ signal the chart is your depths and saved satellite on a plain background.
 ## What it does
 
 - **Free depths,** downloaded in the app and kept on the phone: high detail in Australian
-  waters, and the whole world at coarser detail.
+  waters, the USA, Canada, New Zealand, the Pacific islands and Europe, and the whole world at
+  coarser detail.
 - **3D seabed** of any depth layer, with everything listed above.
 - **Depth colours** on the chart: seven palettes, your own depth range, ready-made ranges
   (reef, inshore, coastal, offshore) and relief shading. The depth at the crosshair.
@@ -328,7 +347,9 @@ npm test
 
 `npm test` serves the app over HTTPS on this computer and drives it in WebKit (Safari's
 engine) set up as an iPhone: first start, offline reload, drawing the download area by finger,
-both depth downloads, the 3D view with the boat in it,
+the depth downloads (worldwide, high detail in Australia, and high detail elsewhere put
+together over the worldwide depths, with its places, server addresses, sums and projections
+checked one by one), the 3D view with the boat in it,
 GeoTIFF surveys, slope colours, contour lines, shallow water in red, a PMTiles chart, waypoints, GPX, GPS, a web chart, saving an area, a restart,
 hiding a layer, marine park zones with the no-take warning, names and ramps, units,
 deleting a layer, the licence texts, and an update taken both ways (after a tap, and by itself
@@ -352,12 +373,15 @@ WebKit on a computer is still not an iPhone. The file picker, the Home Screen in
 limits and real GPS can only be checked on a phone.
 
 `node tests/live.mjs` checks the published app at its real address: the certificate, offline
-use, a real high-detail download and the 3D view. `node tests/screenshots.mjs` retakes the
-pictures in this file. Both need the internet, because they download real depths.
+use, a real high-detail download and the 3D view. `node tests/overseas-live.mjs [folder]` runs
+the high-detail code for outside Australia in Node against the real servers, for small boxes
+at Key West, Halifax, the Bay of Islands, the Mamanuca Islands and the Glenan Islands, and
+writes each GeoTIFF the phone would keep. `node tests/screenshots.mjs` retakes the pictures in
+this file. All three need the internet, because they download real depths.
 
 | Folder or file | What's in it |
 |---|---|
-| `js/` | The app: `app.js` starts it; `seabed.js` downloads depths for the box drawn with `areapicker.js`; `survey.js`, `charts.js` and `depth.js` read and draw them; `terrain.js` runs the 3D view; `places.js` draws the marine park zones, names and ramps; `units.js` holds the units; `updates.js` keeps the app up to date; `basemap.js`, `waypoints.js`, `gps.js`, `offline.js`, `files.js`, `db.js` are what their names say |
+| `js/` | The app: `app.js` starts it; `seabed.js` downloads depths for the box drawn with `areapicker.js`, and for high detail outside Australia `overseas.js` finds and fetches the finer depths and `composite.js` puts them together over the worldwide ones and writes the GeoTIFF; `survey.js`, `charts.js` and `depth.js` read and draw them; `terrain.js` runs the 3D view; `places.js` draws the marine park zones, names and ramps; `units.js` holds the units; `updates.js` keeps the app up to date; `basemap.js`, `waypoints.js`, `gps.js`, `offline.js`, `files.js`, `db.js` are what their names say |
 | `3d/` | The 3D viewer: the Android app's (`terrain3d-web`), changed only in where it loads three.js from, how it is handed its grid and map tiles, keeping land hidden after a reload, a map credit that wraps instead of being cut short, and the wording of its own-map form |
 | `vendor/` | MapLibre GL JS, three.js, PMTiles, geotiff.js and proj4js, as released, with their licences. The two three.js add-ons have their import line pointed at the copy beside them |
 | `glyphs/` | Lettering for depth labels, kept with the app so labels work offline |
@@ -372,7 +396,13 @@ pictures in this file. Both need the internet, because they download real depths
 SeaBathy has no accounts, ads or analytics, and sends nothing to this project. Your position,
 waypoints and depths stay on your phone. The app talks only to:
 
-- **the depth server** when you download depths: GMRT, or IMAS for high detail;
+- **the depth servers** when you download depths: GMRT; for high detail, IMAS in Australia,
+  and elsewhere NOAA (gis.ngdc.noaa.gov), the Canadian Hydrographic Service
+  (nonna-geoserver.data.chs-shc.ca), EMODnet (ows.emodnet-bathymetry.eu), LINZ's public files
+  (nz-coastal.s3.ap-southeast-2.amazonaws.com) or Digital Earth Pacific
+  (stac.digitalearthpacific.org and dep-public-data.s3.us-west-2.amazonaws.com), depending on
+  where the box is. While you draw a box outside Australia the app already asks NOAA, LINZ or
+  Digital Earth Pacific which of their depths lie in it, to say what it will get;
 - **the map servers** of the maps you turn on;
 - **its own web address,** to fetch itself and to look for a newer version;
 - **any web address you add yourself,** for a map or a chart.
@@ -400,7 +430,12 @@ number.
 
 | Map or data | Credit | Terms |
 |---|---|---|
-| High-detail depths | Flukes, E. (2026). Multi-resolution bathymetry composite surface for Australian waters (EEZ) [Dataset]. Institute for Marine and Antarctic Studies. https://doi.org/10.25959/Y9VF-V723 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
+| High-detail depths, Australia | Flukes, E. (2026). Multi-resolution bathymetry composite surface for Australian waters (EEZ) [Dataset]. Institute for Marine and Antarctic Studies. https://doi.org/10.25959/Y9VF-V723 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
+| High-detail depths, USA | NOAA National Centers for Environmental Information, coastal digital elevation models (DEM global mosaic). On the chart: "Depths: NOAA NCEI coastal DEMs (public domain)" | US public domain. Not to be used for navigation |
+| High-detail depths, Canada | Canadian Hydrographic Service, NONNA-10 bathymetric data. On the chart: "Contains information licensed under the Open Government Licence - Canada (CHS NONNA, not for navigation)" | [Open Government Licence - Canada](https://open.canada.ca/en/open-government-licence-canada). Non-navigational data |
+| High-detail depths, Europe | EMODnet Bathymetry Consortium (2024), EMODnet Digital Bathymetry (DTM 2024) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| High-detail depths, New Zealand | Toitū Te Whenua Land Information New Zealand, New Zealand Coastal LiDAR 1m DEM | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| High-detail depths, Pacific islands | Digital Earth Pacific, Pacific Community (SPC), satellite-derived bathymetry (an estimate) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
 | Worldwide depths | GMRT, the Global Multi-Resolution Topography synthesis: Ryan et al. 2009, doi:10.1029/2008GC002332 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Not to be used for navigation |
 | Marine park zones | From each authority's own zoning: Australian Marine Parks, DCCEEW; Great Barrier Reef Marine Park Authority; Queensland Government; NSW Department of Primary Industries (Fisheries); SA Department for Environment and Water; WA Department of Primary Industries and Regional Development; CAPAD 2024, DCCEEW | CC BY. A guide only: the official zoning map and rules for each park are the law |
 | Reef and island names | Composite Gazetteer of Australia, Geoscience Australia and the states and territories; Great Barrier Reef Features, Great Barrier Reef Marine Park Authority | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
@@ -413,7 +448,8 @@ number.
 | Latest true colour | NASA Global Imagery Browse Services (GIBS), part of NASA's ESDIS | NASA data, credit requested |
 
 The depths are shown resampled and coloured by SeaBathy, and a bigger area comes as a coarser
-grid; the data is otherwise as its makers publish it. They do not endorse SeaBathy. Every credit
+grid; outside Australia the high-detail depths are put together with GMRT's in one layer, which
+lists every source it holds. The data is otherwise as its makers publish it. They do not endorse SeaBathy. Every credit
 shows on the chart and in the 3D view while its map or depth layer is shown.
 
 A map you add by your own link, and any file you load, is used under its owner's terms. Add

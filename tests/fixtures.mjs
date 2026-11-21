@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import path from 'node:path';
-import { buildTiff, buildUtmTiff, buildAlbersTiff, surveyDepth as depthOf } from './surveys.mjs';
+import { buildTiff, buildUtmTiff, buildAlbersTiff, buildOverseasTiffs, surveyDepth as depthOf } from './surveys.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** The chart library is a plain browser script: run it here to get the same tile numbering. */
@@ -280,6 +280,12 @@ export async function writeFixtures(dir) {
   writeFileSync(path.join(dir, 'seabed-service'), tiff);
   const albers = await buildAlbersTiff(AREA);
   writeFileSync(path.join(dir, 'high-detail-service'), albers.bytes);
+  // And the stand-ins for GMRT and NOAA when high detail is asked for outside Australia.
+  const overseas = await buildOverseasTiffs();
+  mkdirSync(path.join(dir, 'overseas', 'noaa'), { recursive: true });
+  writeFileSync(path.join(dir, 'overseas', 'gmrt'), overseas.gmrt);
+  writeFileSync(path.join(dir, 'overseas', 'noaa', 'exportImage'), overseas.noaa);
+  writeFileSync(path.join(dir, 'overseas', 'noaa', 'query'), overseas.query);
   // The one tile the tests' stand-in for a person's own map server sends for every tile asked.
   writeFileSync(path.join(dir, 'tile.png'), pngTile([40, 110, 160]));
   return { ...files, tiles: chart.tiles, utmProbe: utm.probe, albersProbe: albers.probe, albersMiddle: albers.middle };

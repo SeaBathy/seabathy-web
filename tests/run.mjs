@@ -909,6 +909,241 @@ await step('A download that fails says why: a server that does not answer is not
   return 'no answer: "did not answer, your internet may be fine"; a 404: "answered 404"';
 });
 
+await step('High detail outside Australia: places and sources, server addresses, the composite\'s sums, projections and the file it writes', async () => {
+  const got = await page.evaluate(async () => {
+    const overseas = await import('./js/overseas.js');
+    const composite = await import('./js/composite.js');
+    const { loadScript } = await import('./js/ui.js');
+    await loadScript('vendor/geotiff.js');
+    await loadScript('vendor/proj4.js');
+    const box = (lng, lat, half = 0.04) => ({ west: lng - half, south: lat - half, east: lng + half, north: lat + half });
+    const places = {
+      keyWest: { west: -81.82, south: 24.455, east: -81.755, north: 24.52 }, halifax: { west: -63.62, south: 44.55, east: -63.52, north: 44.63 },
+      bayOfIslands: { west: 174.08, south: -35.30, east: 174.20, north: -35.20 }, mamanuca: { west: 177.05, south: -17.80, east: 177.20, north: -17.66 },
+      glenan: { west: -4.1, south: 47.65, east: -3.9, north: 47.78 }, honolulu: box(-157.85, 21.28), chicago: box(-87.6, 41.9),
+      victoria: box(-123.37, 48.42, 0.02), seattle: box(-122.4, 47.6), newCaledonia: box(166.4, -22.3), whitsundays: box(149.0, -20.2),
+      bali: box(115.2, -8.75), midAtlantic: box(-40, 30), southland: box(168.35, -46.6), suva: box(178.45, -18.15), dateLine: { west: 179.9, south: -16.8, east: 180, north: -16.7 }
+    };
+    const where = Object.fromEntries(Object.entries(places).map(([name, a]) => [name, { sources: overseas.sourcesFor(a), place: overseas.placeOf(a), australia: overseas.inAustralia(a) }]));
+    const kw = places.keyWest;
+    const urls = {
+      query: overseas.noaaQueryUrl(kw), image: overseas.noaaExportUrl(kw, 100, 80), nonna: overseas.nonnaUrl(places.halifax), nonnaThin: overseas.nonnaUrl(places.halifax, [500, 400]),
+      emodnet: overseas.emodnetUrl(places.glenan), dep: overseas.depSearchUrl(places.mamanuca), gmrt: overseas.gmrtUrl(kw), linz: overseas.linzCollectionUrl()
+    };
+    const sheets = Object.fromEntries(['AV29', 'BA32', 'CH11', 'BN24', 'XX', 'AI10'].map((id) => [id, overseas.linzSheetBounds(id)]));
+    const nztm = window.proj4('EPSG:4326', overseas.NZTM).forward;
+    const pdc = window.proj4('EPSG:4326', overseas.PDC_MERCATOR).forward;
+    const projections = {
+      nztm: [[174.1, -35.25], [174.7762, -41.2865], [168.35, -46.6], [178.0, -38.7]].map((p) => nztm(p)),
+      pdc: [[177.1, -17.7], [179.5, -16.5], [-179.5, -16.5], [150, 0], [-150, 10]].map((p) => pdc(p)),
+      normalised: [190, -181, 180, -180, 45].map(overseas.normaliseLng)
+    };
+    // The grid: as fine as asked within the cell budget, and never coarser than 256 cells a side.
+    const grids = {
+      plain: composite.planGrid({ west: 0, south: 0, east: 0.1, north: 0.1 }, 10, 9e6),
+      big: composite.planGrid({ west: 10, south: 40, east: 11.29, north: 40.98 }, 3, 9e6),
+      small: composite.planGrid({ west: -4.1, south: 47.65, east: -3.9, north: 47.78 }, 115, 9e6)
+    };
+    // The sums on a 10 × 10 grid: GMRT -20 everywhere, a coarser source -10 over all but one corner,
+    // and a finer one -5 over the west half with a one-cell hole inside it.
+    const g = { west: 0, north: 1, dx: 0.1, dy: 0.1, cols: 10, rows: 10 };
+    const n = 100;
+    const out = new Float32Array(n).fill(NaN);
+    const mask = new Uint8Array(n);
+    const base = new Float32Array(n).fill(-20);
+    await composite.blendInto(out, base, 10, 10, 0, mask, 1);
+    const coarse = new Float32Array(n).fill(-10);
+    coarse[99] = NaN;
+    await composite.blendInto(out, coarse, 10, 10, 0, mask, 2);
+    const fine = new Float32Array(n).fill(NaN);
+    for (let j = 0; j < 10; j++) for (let i = 0; i < 5; i++) fine[j * 10 + i] = -5;
+    fine[33] = NaN;
+    const filledHoles = await composite.fillSmallHoles(fine, 10, 10, 4);
+    await composite.blendInto(out, fine, 10, 10, 2, mask, 4);
+    const big = new Float32Array(n).fill(NaN);
+    big[0] = -1;
+    const bigFilled = await composite.fillSmallHoles(big, 10, 10, 9);
+    // A row left empty where a server joins two pieces, and a wide gap that must stay.
+    const seam = new Float32Array(n).fill(NaN);
+    for (let k = 0; k < 30; k++) seam[k] = -2;
+    for (let k = 40; k < 70; k++) seam[k] = -4;
+    for (let j = 0; j < 10; j++) seam[j * 10 + 9] = -9;
+    const seamFilled = await composite.fillThinGaps(seam, 10, 10, 2);
+    const gaps = new Float32Array(n).fill(-3);
+    gaps[0] = NaN;
+    gaps[1] = NaN;
+    const left = composite.fillGaps(gaps, 10, 10);
+    // Putting a block onto the grid: one in longitude and latitude, and one in a projection.
+    const sampled = new Float32Array(n).fill(NaN);
+    const values = Float32Array.from({ length: 400 }, (_, k) => k % 20);
+    await composite.resampleGeographic(sampled, g, { values, cols: 20, rows: 20, west: 0, north: 1, dx: 0.05, dy: 0.05 });
+    const projected = new Float32Array(n).fill(NaN);
+    const pvalues = Float32Array.from({ length: 1000 * 1000 }, (_, k) => (k % 1000) * 0.001);
+    await composite.resampleProjected(projected, g, {
+      width: 1000, height: 1000, bbox: [0, 0, 1000, 1000], tileHeight: 256, toSource: (lng, lat) => [lng * 1000, lat * 1000],
+      read: async (c0, r0, c1, r1) => {
+        const w = c1 - c0;
+        const block = new Float32Array(w * (r1 - r0));
+        for (let r = r0; r < r1; r++) block.set(pvalues.subarray(r * 1000 + c0, r * 1000 + c1), (r - r0) * w);
+        return block;
+      }
+    }, { bandCells: 300000 });
+    // The file: written, read back with the app's own library, as it will be kept.
+    const grid = composite.planGrid({ west: -81.82, south: 24.455, east: -81.755, north: 24.52 }, 40, 9e6);
+    const depths = new Float32Array(grid.cols * grid.rows);
+    for (let k = 0; k < depths.length; k++) depths[k] = -(k % grid.cols) * 0.25 - Math.floor(k / grid.cols) * 0.01;
+    depths[5] = NaN;
+    const blob = await composite.writeGeoTiff(depths, grid);
+    const image = await (await window.GeoTIFF.fromBlob(blob)).getImage(0);
+    const back = (await image.readRasters({ interleave: false }))[0];
+    let same = true;
+    for (let k = 0; k < depths.length; k++) if (!(back[k] === depths[k] || (back[k] !== back[k] && depths[k] !== depths[k]))) same = false;
+    const plan = overseas.planFor(kw, [{ id: 'noaa', detail: 3.4 }], 9e6);
+    return {
+      where, urls, sheets, projections, grids, filledHoles, bigFilled, left, seamFilled, seam: Array.from(seam),
+      out: Array.from(out), mask: Array.from(mask), sampled: Array.from(sampled), projected: Array.from(projected),
+      file: { same, size: blob.size, compressed: image.fileDirectory.Compression, predictor: image.fileDirectory.Predictor, bbox: image.getBoundingBox(), noData: String(image.getGDALNoData()), keys: image.getGeoKeys(), width: image.getWidth(), cols: grid.cols },
+      line: overseas.describe('USA (Florida)', [{ id: 'noaa', detail: 3.4 }], plan, (b) => `${Math.round(b / 1e5) / 10} MB`),
+      europe: overseas.describe('Europe (Bay of Biscay)', [{ id: 'emodnet', detail: 115 }], overseas.planFor(places.glenan, [{ id: 'emodnet', detail: 115 }], 9e6), () => '1 MB')
+    };
+  });
+  const near = (a, b, tolerance) => Math.abs(a - b) <= tolerance;
+  const w = got.where;
+  const is = (name, sources, place) => expect(JSON.stringify(w[name].sources) === JSON.stringify(sources) && w[name].place === place, `${name} is ${JSON.stringify(w[name])}, not ${JSON.stringify(sources)} in "${place}"`);
+  is('keyWest', ['noaa'], 'USA (Florida)');
+  is('halifax', ['nonna'], 'Canada (Nova Scotia)');
+  is('bayOfIslands', ['linz'], 'New Zealand (Northland)');
+  is('mamanuca', ['dep'], 'Fiji');
+  is('glenan', ['emodnet'], 'Europe (Bay of Biscay)');
+  is('honolulu', ['noaa', 'dep'], 'USA (Hawaii)');
+  is('chicago', ['noaa', 'nonna'], 'USA and Canada (Great Lakes)');
+  expect(w.victoria.place === 'Canada (British Columbia)' && w.seattle.place === 'USA (Pacific coast)', `Victoria is in ${w.victoria.place}, Seattle in ${w.seattle.place}`);
+  is('newCaledonia', ['dep'], 'New Caledonia');
+  is('southland', ['linz'], 'New Zealand (Southland)');
+  is('suva', ['dep'], 'Fiji');
+  is('dateLine', ['dep'], 'Fiji');
+  expect(w.whitsundays.australia && !w.whitsundays.sources.length, `Australian waters are ${JSON.stringify(w.whitsundays)}`);
+  expect(!w.bali.australia && !w.bali.sources.length && !w.midAtlantic.sources.length, `places with no high detail are ${JSON.stringify([w.bali, w.midAtlantic])}`);
+  expect(!w.newCaledonia.australia && !w.keyWest.australia, 'a place outside Australia was taken for Australian waters');
+  const u = got.urls;
+  const rule = JSON.parse(decodeURIComponent(/mosaicRule=([^&]+)/.exec(u.image)?.[1] || '{}'));
+  expect(u.query.startsWith('https://gis.ngdc.noaa.gov/') && u.query.includes('/query?geometry=-81.82,24.455,-81.755,24.52&') && /outFields=DemName,Name,LowPS/.test(u.query) && u.query.endsWith('f=json'), `NOAA's catalogue is asked as ${u.query}`);
+  expect(/exportImage\?bbox=-81.82,24.455,-81.755,24.52&bboxSR=4326&imageSR=4326&size=100,80&/.test(u.image) && /pixelType=F32/.test(u.image) && /adjustAspectRatio=false/.test(u.image) && /noData=-99999/.test(u.image) && /LowPS<0.004/.test(rule.where || ''), `NOAA's depths are asked as ${u.image}`);
+  expect(u.nonna.startsWith('https://nonna-geoserver.data.chs-shc.ca/geoserver/wcs?') && /coverageId=nonna__NONNA%2010%20Coverage/.test(u.nonna) && u.nonna.includes('subset=Long(-63.62,-63.52)&subset=Lat(44.55,44.63)') && /subsettingCrs=http:\/\/www.opengis.net\/def\/crs\/EPSG\/0\/4326/.test(u.nonna) && !/scalesize/.test(u.nonna), `NONNA is asked as ${u.nonna}`);
+  expect(u.nonnaThin.includes('scalesize=i(500),j(400)'), `a thinned NONNA request is ${u.nonnaThin}`);
+  expect(u.emodnet.startsWith('https://ows.emodnet-bathymetry.eu/wcs?') && /coverageId=emodnet__mean/.test(u.emodnet) && u.emodnet.includes('subset=Long(-4.1,-3.9)&subset=Lat(47.65,47.78)'), `EMODnet is asked as ${u.emodnet}`);
+  expect(u.dep === 'https://stac.digitalearthpacific.org/collections/dep_s2_sdb/items?bbox=177.05,-17.8,177.2,-17.66&limit=50', `Digital Earth Pacific is asked as ${u.dep}`);
+  expect(u.linz === 'https://nz-coastal.s3.ap-southeast-2.amazonaws.com/new-zealand/new-zealand/dem_1m/2193/collection.json' && /north=24.52&south=24.455&east=-81.755&west=-81.82&layer=topo&format=geotiff/.test(u.gmrt), `LINZ and GMRT are asked as ${u.linz}, ${u.gmrt}`);
+  // LINZ's tiles, as its own files say they lie.
+  const s = got.sheets;
+  expect(JSON.stringify(s.AV29) === '[1684000,6090000,1708000,6126000]' && JSON.stringify(s.BA32) === '[1756000,5910000,1780000,5946000]' && JSON.stringify(s.CH11) === '[1252000,4794000,1276000,4830000]' && JSON.stringify(s.BN24) === '[1564000,5478000,1588000,5514000]' && s.XX === null && s.AI10 === null,
+    `LINZ's tiles are placed at ${JSON.stringify(s)}`);
+  // Known pairs, worked out with PROJ (GDAL): NZTM 2000 and PDC Mercator, across the date line.
+  const p = got.projections;
+  const nztm = [[1700072.64, 6098677.851], [1748735.553, 5427916.479], [1243873.049, 4828773.696], [2034902.385, 5704632.295]];
+  const pdc = [[3016758.2, -1989479.566], [3283924.978, -1850569.894], [3395244.469, -1850569.894], [0, 0], [6679169.448, 1111475.103]];
+  expect(p.nztm.every(([x, y], i) => near(x, nztm[i][0], 0.01) && near(y, nztm[i][1], 0.01)), `NZTM gives ${JSON.stringify(p.nztm)}`);
+  expect(p.pdc.every(([x, y], i) => near(x, pdc[i][0], 0.01) && near(y, pdc[i][1], 0.01)), `PDC Mercator gives ${JSON.stringify(p.pdc)}`);
+  expect(JSON.stringify(p.normalised) === '[-170,179,-180,-180,45]', `longitudes come back as ${JSON.stringify(p.normalised)}`);
+  const gr = got.grids;
+  expect(gr.plain.cols === 1113 && gr.plain.rows === 1106 && near(gr.plain.cell, 10, 0.01), `a 0.1° box at 10 m is ${JSON.stringify(gr.plain)}`);
+  expect(gr.big.cols * gr.big.rows <= 9e6 && gr.big.cols * gr.big.rows > 8.9e6 && gr.big.cell > 36 && gr.big.cell < 38, `a 110 km box at 3 m is ${gr.big.cols} × ${gr.big.rows}, ${gr.big.cell.toFixed(1)} m`);
+  expect(Math.max(gr.small.cols, gr.small.rows) === 256, `a small box at 115 m is ${gr.small.cols} × ${gr.small.rows}`);
+  // Finest wins, the coarser fills the gaps, and the join fades over two cells.
+  const o = got.out;
+  expect(o[0] === -5 && o[3] === -5 && near(o[4], -7.5, 1e-6) && o[5] === -10 && o[99] === -20 && o[33] === -5, `the composite row reads ${o.slice(0, 10).join(', ')}; the hole ${o[33]}, the corner ${o[99]}`);
+  expect(got.mask[0] === 4 && got.mask[4] === 6 && got.mask[5] === 2 && got.mask[99] === 1, `the cells' sources are ${got.mask.slice(0, 10).join(', ')} … ${got.mask[99]}`);
+  expect(got.filledHoles === 1 && got.bigFilled === 0 && got.left === 0, `holes filled: ${got.filledHoles} small, ${got.bigFilled} big; ${got.left} gaps left`);
+  // The empty row between rows 2 and 4 is filled half-way between them; the 3 empty rows below are too wide.
+  expect(got.seam.slice(30, 39).every((v) => near(v, -3, 1e-6)) && got.seam.slice(70, 99).every((v, i) => (i % 10 === 9 ? v === -9 : v !== v)), `a seam is filled as ${got.seam.slice(30, 40).join(', ')}`);
+  expect(got.sampled.every((v, k) => near(v, (k % 10) * 2 + 0.5, 1e-5)), `a block in degrees lands as ${got.sampled.slice(0, 10).join(', ')}`);
+  expect(got.projected.every((v, k) => near(v, ((k % 10) * 100 + 50) * 0.001 - 0.0005, 1e-4)), `a projected block lands as ${got.projected.slice(0, 10).join(', ')}`);
+  const f = got.file;
+  expect(f.same && f.compressed === 8 && f.predictor === 3 && f.noData === 'NaN' && f.keys.GeographicTypeGeoKey === 4326 && f.width === f.cols, `the file reads back as ${JSON.stringify(f)}`);
+  expect(near(f.bbox[0], -81.82, 1e-9) && near(f.bbox[1], 24.455, 1e-9) && near(f.bbox[2], -81.755, 1e-9) && near(f.bbox[3], 24.52, 1e-9), `the file lies at ${f.bbox}`);
+  expect(/^USA \(Florida\): NOAA, about 3 m detail; GMRT fills the rest\. Up to about [\d.]+ MB\.$/.test(got.line) && got.europe === 'Europe (Bay of Biscay): EMODnet, about 115 m. Up to about 1 MB.', `the lines under the box are "${got.line}" and "${got.europe}"`);
+  return `16 places, 8 addresses, 4 LINZ tiles, 9 projected points; file ${f.size} bytes, deflate with the float predictor`;
+});
+
+await step('High detail outside Australia: offered and explained, the box named with what it will get, refused where there is none, and put together over the worldwide depths', async () => {
+  // The tests' own server stands in for GMRT and for NOAA, round Key West.
+  await page.evaluate((url) => {
+    window.seabathy.seabed.useServer(`${url}overseas/gmrt`, 'gmrt');
+    window.seabathy.seabed.useServer(`${url}overseas/noaa`, 'noaa');
+  }, DATA);
+  const requests = () => page.evaluate((prefix) => performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.startsWith(prefix)), `${DATA}overseas/`);
+  // Every request is counted: the chart's own tiles must not crowd them out of the browser's list.
+  await page.evaluate(() => {
+    performance.setResourceTimingBufferSize(20000);
+    performance.clearResourceTimings();
+  });
+  const before = await page.evaluate(() => window.seabathy.charts.list().length);
+  // Where there is no high detail the box is refused, and nothing is asked of anyone.
+  await goTo(page, 115.2, -8.75, 11);
+  await openMenu(page, 'menu-seabed');
+  await page.click('#seabed-high');
+  await page.waitForSelector('#area-bar');
+  await drawBox(page);
+  await page.waitForFunction(() => /No high-detail depths here/.test(document.querySelector('#area-info').textContent), null, { timeout: 15000 });
+  const refused = await pickerSays(page);
+  expect(refused.ready === false && /Choose Worldwide|choose Worldwide/.test(refused.info), `outside every source the bar says ${JSON.stringify(refused)}`);
+  await page.click('#area-cancel');
+  await page.waitForFunction(() => !document.querySelector('#area-bar'));
+  // Key West: the box straddles the edge of the stand-in NOAA's depths.
+  await goTo(page, -81.75, 24.55, 12);
+  await page.evaluate((edge) => {
+    const map = window.seabathy.map;
+    const at = map.project([-81.75, edge]);
+    map.panBy([0, at.y - innerHeight * 0.39], { animate: false });
+  }, 24.55);
+  await openMenu(page, 'menu-seabed');
+  const said = await page.locator('.card').innerText();
+  expect(/High detail/.test(said) && /USA/.test(said) && /Canada/.test(said) && /New Zealand/.test(said) && /Pacific islands/.test(said) && /Europe/.test(said) && /Elsewhere use Worldwide/.test(said), `the card says: ${said.replace(/\s+/g, ' ')}`);
+  await page.click('#seabed-high');
+  await page.waitForSelector('#area-bar');
+  const drawn = await boxOnChart(page);
+  await drawBox(page);
+  await page.waitForFunction(() => /^USA/.test(document.querySelector('#area-info').textContent), null, { timeout: 20000 });
+  await pickerReady(page);
+  const told = await pickerSays(page);
+  expect(/^USA \(Florida\): NOAA, about 11 m detail; GMRT fills the rest\. Up to about [\d.]+ (KB|MB)\.$/.test(told.info), `the bar says "${told.info}"`);
+  await shot(page, '4g-area-high-detail-overseas');
+  const asked = await requests();
+  expect(asked.length === 1 && asked[0].includes('overseas/noaa/query?geometry='), `before the box was confirmed these were asked: ${asked.join(' ')}`);
+  await page.click('#area-go');
+  await page.waitForFunction((n) => window.seabathy.charts.list().length === n + 1, before, { timeout: LOAD });
+  await page.waitForFunction(() => document.querySelector('#credits').textContent.includes('NOAA'), null, { timeout: 10000 }).catch(() => {});
+  const south = { lng: (drawn.west + drawn.east) / 2, lat: 24.55 - 0.01 };
+  const north = { lng: (drawn.west + drawn.east) / 2, lat: 24.55 + 0.01 };
+  const info = await page.evaluate(async ([a, b]) => {
+    const c = window.seabathy.charts.list().at(-1);
+    const survey = await import('./js/survey.js');
+    return {
+      name: c.name, credit: c.attribution, crs: c.tiff.crs.label, size: c.size, cells: c.tiff.width * c.tiff.height,
+      fine: await survey.depthAt(c, a.lng, a.lat), coarse: await survey.depthAt(c, b.lng, b.lat), credits: document.querySelector('#credits').textContent,
+      panel: window.seabathy.basemap.creditParts()
+    };
+  }, [south, north]);
+  const all = await requests();
+  expect(all.filter((u) => u.includes('noaa/query')).length === 1 && all.filter((u) => u.includes('noaa/exportImage')).length >= 1 && all.filter((u) => u.includes('overseas/gmrt')).length === 1, `the servers were asked: ${all.map((u) => u.split('?')[0].replace(DATA, '')).join(', ')}`);
+  const image = new URL(all.find((u) => u.includes('exportImage')));
+  expect(image.searchParams.get('adjustAspectRatio') === 'false' && image.searchParams.get('pixelType') === 'F32', `NOAA was asked for ${image.search.slice(0, 160)}`);
+  expect(/^High detail 24\.5\dN 81\.\d\dW/.test(info.name) && /Geographic/.test(info.crs), `it was saved as "${info.name}" in ${info.crs}`);
+  expect(info.credit === 'Depths: NOAA NCEI coastal DEMs (public domain) • Depths: GMRT, Ryan et al. 2009 (CC BY 4.0)', `it is credited "${info.credit}"`);
+  expect(info.credits.includes('NOAA NCEI') && info.credits.includes('GMRT') && info.panel.includes('Depths: NOAA NCEI coastal DEMs (public domain)') && info.panel.includes('Depths: GMRT, Ryan et al. 2009 (CC BY 4.0)'), `the chart's credits are "${info.credits}"`);
+  expect(Math.abs(info.fine - -4) < 0.05, `NOAA's part reads ${info.fine} m, not -4`);
+  const want = -(30 + (north.lng - -81.95) * 100);
+  expect(Math.abs(info.coarse - want) < 0.3, `the worldwide part reads ${info.coarse} m, not ${want.toFixed(2)}`);
+  expect(info.cells <= 9e6, `${info.cells} cells`);
+  // Tidied away for the checks that follow.
+  await removeLayer(page);
+  await page.waitForFunction((n) => window.seabathy.charts.list().length === n, before, { timeout: 10000 });
+  await closeSheet(page);
+  await page.evaluate((url) => window.seabathy.seabed.useServer(`${url}seabed-service`, 'gmrt'), DATA);
+  await goTo(page, MID.lng, MID.lat, 10.5);
+  return `${refused.info} | ${told.info} | ${info.name}: ${info.fine.toFixed(2)} m from NOAA, ${info.coarse.toFixed(2)} m from GMRT`;
+});
+
 await step('3D: the seabed opens in 3D; height, a depth band, colours, the boat and a waypoint all work', async () => {
   await closeSheet(page);
   // The whole survey on screen and the chart at rest, so 3D opens on all of it.

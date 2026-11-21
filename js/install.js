@@ -5,7 +5,7 @@ import { setting } from './db.js';
 import * as updates from './updates.js';
 import { add, button, card, closeSheet, confirmCard, el, openSheet, refreshSheet, topSheet, heading, note, row, toast, toggle } from './ui.js';
 
-export const VERSION = '0.3.9';
+export const VERSION = '0.4.0';
 /** Raise when the wording changes in a way people should agree to again. */
 const TERMS_VERSION = 1;
 const TERMS_URL = 'https://seabathy.com/terms';
@@ -187,15 +187,20 @@ export function openAbout() {
       canInstall() ? row('Install SeaBathy', 'One tap where the browser allows it, and the steps for every other browser', openInstall, { id: 'about-install' }) : null,
       heading('GETTING DEPTHS'),
       note('Layers, Get seabed depths: draw a box on the chart over the water you want, and the app downloads free depths for it and keeps them on the phone. They work with no signal, and the 3D button flies you over them.'),
-      note('In Australian waters you can choose High detail: the IMAS composite, 10 m on the shelf, sent by IMAS\'s own server. A box up to about 30 km square comes at the full 10 m; a bigger one comes coarser, so draw a small box for the spot that matters. Anywhere else, and as the other choice in Australia, the depths are the worldwide GMRT model.'),
+      note('Where it is published you can choose High detail. In Australian waters it is the IMAS composite, 10 m on the shelf, sent by IMAS\'s own server: a box up to about 30 km square comes at the full 10 m, a bigger one coarser. Outside Australia: the USA (NOAA\'s coastal models, about 3 m on most coasts), Canada (Canadian Hydrographic Service surveys), New Zealand (LINZ coastal lidar, near shore), the Pacific islands (Digital Earth Pacific\'s satellite estimate of the reef shallows) and Europe (EMODnet, about 115 m). There the phone puts the finer depths over the worldwide ones, which fill whatever they don\'t cover, and the line under the box says where it is and what it will get. Anywhere else, and as the other choice, the depths are the worldwide GMRT model.'),
       note('Your own files load too: GeoTIFF depth surveys (.tif), and PMTiles charts (.pmtiles) with depth shapes, contour lines or chart pictures. Copy them to the Files app, then Settings, Depths, Load GeoTIFF or PMTiles file.'),
       note('An MBTiles file must be converted first, on a computer: pmtiles convert chart.mbtiles chart.pmtiles (the free "pmtiles" tool from Protomaps).'),
       heading('PRIVACY'),
-      note('Your position, waypoints and charts stay on this phone. The app talks only to: the map servers of the maps you turn on; the depth servers when you download depths (GMRT, or IMAS for high detail); its own web address, to look for a newer version of itself; and any web address you add yourself. They see the usual things a web request shows (your internet address and the area of map asked for). A survey in an unusual map projection makes the app ask epsg.io once for that projection\'s definition.'),
+      note('Your position, waypoints and charts stay on this phone. The app talks only to: the map servers of the maps you turn on; the depth servers when you download depths (GMRT; for high detail IMAS, NOAA, the Canadian Hydrographic Service, EMODnet, LINZ or Digital Earth Pacific, depending on where the box is); its own web address, to look for a newer version of itself; and any web address you add yourself. They see the usual things a web request shows (your internet address and the area of map asked for). A survey in an unusual map projection makes the app ask epsg.io once for that projection\'s definition.'),
       heading('CREDITS'),
-      note('High-detail depths: Flukes, E. (2026). Multi-resolution bathymetry composite surface for Australian waters (EEZ) [Dataset]. Institute for Marine and Antarctic Studies. https://doi.org/10.25959/Y9VF-V723. Licence: CC BY 4.0. Not to be used for navigation.'),
+      note('High-detail depths, Australia: Flukes, E. (2026). Multi-resolution bathymetry composite surface for Australian waters (EEZ) [Dataset]. Institute for Marine and Antarctic Studies. https://doi.org/10.25959/Y9VF-V723. Licence: CC BY 4.0. Not to be used for navigation.'),
+      note('High-detail depths, USA: NOAA National Centers for Environmental Information, coastal digital elevation models. US public domain. Not to be used for navigation.'),
+      note('High-detail depths, Canada: Canadian Hydrographic Service, NONNA-10 bathymetric data. Contains information licensed under the Open Government Licence - Canada. Not for navigation.'),
+      note('High-detail depths, Europe: EMODnet Bathymetry Consortium (2024), EMODnet Digital Bathymetry (DTM 2024). CC BY 4.0.'),
+      note('High-detail depths, New Zealand: Toitū Te Whenua Land Information New Zealand, New Zealand Coastal LiDAR 1m DEM. CC BY 4.0.'),
+      note('High-detail depths, Pacific islands (an estimate from satellite pictures): Digital Earth Pacific, Pacific Community (SPC), satellite-derived bathymetry. CC BY 4.0.'),
       note('Worldwide depths: GMRT, the Global Multi-Resolution Topography synthesis (Ryan et al. 2009), CC BY 4.0. Not to be used for navigation.'),
-      note('SeaBathy shows both resampled to the screen and coloured, and a bigger area comes as a coarser grid. Their makers do not endorse SeaBathy.'),
+      note('SeaBathy shows them all resampled to the screen and coloured; outside Australia it puts the high-detail depths over the worldwide ones in one layer, and a bigger area comes as a coarser grid. Their makers do not endorse SeaBathy.'),
       note('Marine park zones, from each authority\'s own zoning (all CC BY): Australian Marine Parks, DCCEEW; Great Barrier Reef Marine Park Authority; Queensland Government; NSW Department of Primary Industries (Fisheries); SA Department for Environment and Water; WA Department of Primary Industries and Regional Development; and CAPAD 2024, DCCEEW. A guide only: the official zoning map and rules for each park are the law.'),
       note('Reef and island names: Composite Gazetteer of Australia, Geoscience Australia and the states and territories (CC BY 4.0); Great Barrier Reef Features, Great Barrier Reef Marine Park Authority (CC BY 4.0). Boat ramps: © OpenStreetMap contributors (ODbL).'),
       note('Buoys, beacons, pipelines and cables (a beta layer, not for navigation): Transport for NSW, WA Department of Transport, Victorian and Queensland Governments, AMSA, NOPTA, Geoscience Australia, ACMA, and © OpenStreetMap contributors.'),
