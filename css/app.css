@@ -293,9 +293,14 @@ body.card-on .maplibregl-ctrl-bottom-right, body.tool-on .maplibregl-ctrl-bottom
   flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   padding: 8px 10px 12px calc(var(--left) + 10px);
 }
-#drawer-foot { flex: none; padding: 8px 10px calc(var(--bottom) + 10px) calc(var(--left) + 10px); background: var(--bg); border-top: 1px solid var(--line); }
+#drawer-foot { flex: none; padding: 8px 10px 8px calc(var(--left) + 10px); background: var(--bg); border-top: 1px solid var(--line); }
 .drawer-label { margin: 14px 2px 4px; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 #drawer-foot .drawer-label { margin: 0 2px 5px; }
+#drawer-home {
+  flex: none; display: block; padding: 0 10px calc(var(--bottom) + 8px) calc(var(--left) + 12px);
+  background: var(--bg); font-size: 12px; color: var(--muted); text-decoration: none;
+}
+#drawer-home:active { color: var(--text); }
 .drawer-empty { margin: 6px 2px 8px; font-size: 13px; color: var(--muted); }
 .drawer-link {
   display: block; width: 100%; margin: 0 0 4px; padding: 9px 2px; border: 0; background: none; text-align: left;
