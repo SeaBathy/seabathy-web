@@ -2031,9 +2031,9 @@ await step('Marine parks and places: zones, reef and island names and boat ramps
   });
   if (ramp) expect(/Boat ramp/i.test(await tapCard(ramp.x, ramp.y)), 'a tap on a ramp did not say it is one');
   // Once fetched, each file is kept for use with no signal.
-  const keptNow = () => page.evaluate(async () => (await (await caches.open('seabathy-data-1')).keys()).map((r) => r.url.split('/').pop()).sort().join());
+  const keptNow = () => page.evaluate(async () => (await (await caches.open('seabathy-data-2')).keys()).map((r) => r.url.split('/').pop()).sort().join());
   // The file just fetched may take a moment to show up as kept.
-  if (worker) await page.waitForFunction(async () => (await (await caches.open('seabathy-data-1')).keys()).length >= 3, null, { timeout: 15000 }).catch(() => {});
+  if (worker) await page.waitForFunction(async () => (await (await caches.open('seabathy-data-2')).keys()).length >= 3, null, { timeout: 15000 }).catch(() => {});
   const keptFiles = worker ? await keptNow() : 'not checked';
   if (worker) expect(keptFiles === 'places.geojson,ramps.geojson,zones.geojson', `kept for offline use: ${keptFiles || 'nothing'}`);
   // All off again: nothing left on the chart or in the credits.

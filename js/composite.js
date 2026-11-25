@@ -81,13 +81,46 @@ export function sample(values, cols, rows, col, row) {
   return (a * (1 - fc) + b * fc) * (1 - fr) + (d * (1 - fc) + e * fc) * fr;
 }
 
+/** Catmull-Rom weights for the four cells round a point [t] (0..1) of the way between the middle two. */
+const cubicWeights = (t) => {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return [-0.5 * t3 + t2 - 0.5 * t, 1.5 * t3 - 2.5 * t2 + 1, -1.5 * t3 + 2 * t2 + 0.5 * t, 0.5 * t3 - 0.5 * t2];
+};
+
+/**
+ * As [sample], but curved through the sixteen cells round the point, so a coarse model drawn on
+ * a much finer grid comes out smooth instead of in flat facets. Beside a gap or an edge, as
+ * [sample].
+ */
+export function sampleSmooth(values, cols, rows, col, row) {
+  if (col < 1 || row < 1 || col > cols - 3 || row > rows - 3) return sample(values, cols, rows, col, row);
+  const c0 = Math.floor(col);
+  const r0 = Math.floor(row);
+  const wx = cubicWeights(col - c0);
+  const wy = cubicWeights(row - r0);
+  let sum = 0;
+  for (let j = 0; j < 4; j++) {
+    const base = (r0 - 1 + j) * cols + c0 - 1;
+    let line = 0;
+    for (let i = 0; i < 4; i++) {
+      const v = values[base + i];
+      if (v !== v) return sample(values, cols, rows, col, row);
+      line += v * wx[i];
+    }
+    sum += line * wy[j];
+  }
+  return sum;
+}
+
 /**
  * Puts a block of depths held in longitude and latitude onto the grid. [src] is { values, cols,
  * rows, west, north, dx, dy } (its outer edges and cell size, NaN where it has nothing), and only
  * the grid's cells whose middles are inside [core] ({ west, south, east, north }, the whole
  * block when left out) are taken from it. Answers how many cells got a depth.
  */
-export async function resampleGeographic(layer, grid, src, core = null, tick = noPause) {
+export async function resampleGeographic(layer, grid, src, core = null, tick = noPause, smooth = false) {
+  const at = smooth ? sampleSmooth : sample;
   const box = core || { west: src.west, north: src.north, east: src.west + src.cols * src.dx, south: src.north - src.rows * src.dy };
   const i0 = Math.max(0, Math.ceil((box.west - grid.west) / grid.dx - 0.5 - 1e-9));
   const i1 = Math.min(grid.cols, Math.ceil((box.east - grid.west) / grid.dx - 0.5 - 1e-9));
@@ -97,7 +130,7 @@ export async function resampleGeographic(layer, grid, src, core = null, tick = n
   for (let j = j0; j < j1; j++) {
     const row = (src.north - latOf(grid, j)) / src.dy - 0.5;
     for (let i = i0; i < i1; i++) {
-      const v = sample(src.values, src.cols, src.rows, (lngOf(grid, i) - src.west) / src.dx - 0.5, row);
+      const v = at(src.values, src.cols, src.rows, (lngOf(grid, i) - src.west) / src.dx - 0.5, row);
       if (v === v) {
         layer[j * grid.cols + i] = v;
         got++;
@@ -116,7 +149,8 @@ export async function resampleGeographic(layer, grid, src, core = null, tick = n
  * or so and filled in between, which is far finer than a cell over the 110 km a download may
  * span. Answers how many cells got a depth.
  */
-export async function resampleProjected(layer, grid, src, { tick = noPause, bandCells = 4_000_000 } = {}) {
+export async function resampleProjected(layer, grid, src, { tick = noPause, bandCells = 4_000_000, smooth = false } = {}) {
+  const pick = smooth ? sampleSmooth : sample;
   const { cols, rows } = grid;
   const [x0, y0, x1, y1] = src.bbox;
   const resX = (x1 - x0) / src.width;
@@ -191,7 +225,7 @@ export async function resampleProjected(layer, grid, src, { tick = noPause, band
       for (let i = 0; i < cols; i++) {
         const y = at(py, i, j);
         if (y < top - 0.5 || y >= bottom - 0.5) continue;
-        const v = sample(data, w, h, at(px, i, j) - c0, y - rs);
+        const v = pick(data, w, h, at(px, i, j) - c0, y - rs);
         if (v === v) {
           layer[j * cols + i] = v;
           got++;
