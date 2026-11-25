@@ -1,7 +1,7 @@
 # SeaBathy web app
 
 ![Licence: GPL-3.0](https://img.shields.io/badge/licence-GPL--3.0-blue)
-![Version 0.4.1](https://img.shields.io/badge/version-0.4.1-informational)
+![Version 0.4.2](https://img.shields.io/badge/version-0.4.2-informational)
 ![Works offline](https://img.shields.io/badge/works-offline-success)
 ![iPhone, Android and computer](https://img.shields.io/badge/runs%20on-iPhone%20%C2%B7%20Android%20%C2%B7%20computer-lightgrey)
 
@@ -94,7 +94,7 @@ There are two kinds:
 
   | Where | Depths | Detail |
   |---|---|---|
-  | Australia, all waters | The IMAS multi-resolution bathymetry composite, cut out and sent by IMAS's own map server | 10 m on the continental shelf; a box up to about 30 km square comes at the full 10 m |
+  | Australia, all waters | The IMAS multi-resolution bathymetry composite, cut out and sent by IMAS's own map server. While IMAS's server is closed (since 25 November 2026), the same sources put together on the phone from AusSeabed: Geoscience Australia's AusBathyTopo models (250 m, and 30 m round the Great Barrier Reef, the north, Torres Strait, Bass Strait and Perth) with the AusSeabed surveys on top | 10 m on the continental shelf; a box up to about 30 km square comes at the full 10 m |
   | USA: all coasts, Hawaii, Puerto Rico and the US Virgin Islands, Guam and the Northern Marianas, American Samoa; Alaska in parts; the Great Lakes | NOAA NCEI's coastal elevation models, cut out by NOAA's server | About 3 m on most coasts, 10 to 16 m on older models, about 90 m in the Great Lakes |
   | Canada: surveyed coasts, harbours and channels | The Canadian Hydrographic Service's NONNA-10 surveys | About 10 to 15 m, where surveyed |
   | New Zealand: coasts surveyed by lidar since 2024 | LINZ's coastal lidar (New Zealand Coastal LiDAR 1m DEM), read straight from LINZ's public files | Down to a few metres, near shore and to about 25 m deep |
@@ -111,7 +111,7 @@ There are two kinds:
   where ships have surveyed and much coarser elsewhere. One download holds up to about 440 km
   across and 55 MB.
 
-The high-detail depths rely on public servers that this project does not run: IMAS's, NOAA's,
+The high-detail depths rely on public servers that this project does not run: IMAS's, AusSeabed's, NOAA's,
 the Canadian Hydrographic Service's, EMODnet's, and the public files of LINZ and Digital Earth
 Pacific. If one of them changes, **High detail** there stops working until the app is updated;
 depths already on the phone and the worldwide depths are not affected. Their depths are on
@@ -396,7 +396,9 @@ this file. All three need the internet, because they download real depths.
 SeaBathy has no accounts, ads or analytics, and sends nothing to this project. Your position,
 waypoints and depths stay on your phone. The app talks only to:
 
-- **the depth servers** when you download depths: GMRT; for high detail, IMAS in Australia,
+- **the depth servers** when you download depths: GMRT; for high detail, IMAS in Australia (or, while
+  IMAS's server is closed, AusSeabed: warehouse.ausseabed.gov.au and
+  ausseabed-public-bathymetry.s3.ap-southeast-2.amazonaws.com),
   and elsewhere NOAA (gis.ngdc.noaa.gov), the Canadian Hydrographic Service
   (nonna-geoserver.data.chs-shc.ca), EMODnet (ows.emodnet-bathymetry.eu), LINZ's public files
   (nz-coastal.s3.ap-southeast-2.amazonaws.com) or Digital Earth Pacific

@@ -15,6 +15,7 @@
 import * as charts from './charts.js';
 import * as files from './files.js';
 import * as overseas from './overseas.js';
+import * as australia from './australia.js';
 import { pickArea } from './areapicker.js';
 import { card, el, toast, progressCard, holdScreenOn, closeSheet, loadScript } from './ui.js';
 
@@ -57,6 +58,7 @@ const servers = {
  */
 export function useServer(url, which = 'gmrt') {
   if (which in servers) servers[which] = url;
+  if (which === 'ausseabed') australia.useServer(url);
   overseas.useServer(which, url);
   overseas.forgetLists();
 }
@@ -174,10 +176,12 @@ function serverSaid(bytes) {
  * see for themselves whether this device reaches the server, and [detail] the small print.
  */
 class Told extends Error {
-  constructor(message, { check = null, detail = '' } = {}) {
+  constructor(message, { check = null, detail = '', server = false } = {}) {
     super(message);
     this.check = check;
     this.detail = detail;
+    /** The server let the person down (no answer, too slow, an error or a refusal), not this device or the area. */
+    this.server = server;
   }
 }
 
@@ -220,11 +224,11 @@ async function ask(url, who, check, progress, asking) {
     } catch (error) {
       if (progress.signal.aborted) throw error;
       if (!navigator.onLine) throw new Told('This device is offline. The depths need the internet to download.');
-      if (waiting.signal.aborted) throw new Told(`${capital(who)} took too long to answer. It may be busy: try again in a few minutes, or draw a smaller box.`, { check });
+      if (waiting.signal.aborted) throw new Told(`${capital(who)} took too long to answer. It may be busy: try again in a few minutes, or draw a smaller box.`, { check, server: true });
       if (attempt >= 2) {
         throw new Told(
           `${capital(who)} did not answer. Your internet may be fine: the server may be down for a moment, or something on this device or its connection is stopping the request, such as a VPN, security software, an ad blocker or a work or public network. Try again in a few minutes.`,
-          { check, detail: `The browser said: ${String(error?.message || error).slice(0, 80)}.` });
+          { check, server: true, detail: `The browser said: ${String(error?.message || error).slice(0, 80)}.` });
       }
       progress.set(null, `No answer from ${who}. Trying once more…`);
       await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS));
@@ -250,9 +254,9 @@ async function receive(url, { who, check = null, progress, asking, noData, again
     if (progress.signal.aborted) throw new Error('Cancelled');
     return receive(url, { who, check, progress, asking, noData });
   }
-  if (response.status === 429 || response.status >= 500) throw new Told(`${capital(who)} is busy or having trouble just now (it answered ${response.status}). Try again in a few minutes.`);
+  if (response.status === 429 || response.status >= 500) throw new Told(`${capital(who)} is busy or having trouble just now (it answered ${response.status}). Try again in a few minutes.`, { check, server: true });
   // A map server explains a refusal in the body of a "400"; anything else is a failure.
-  if (!response.ok && response.status !== 400) throw new Told(`${capital(who)} answered ${response.status}, not the depths. Try again later.`);
+  if (!response.ok && response.status !== 400) throw new Told(`${capital(who)} answered ${response.status}, not the depths. Try again later.`, { check, server: true });
   const parts = [];
   let got = 0;
   try {
@@ -282,10 +286,13 @@ async function receive(url, { who, check = null, progress, asking, noData, again
 /**
  * Runs [work] under a progress card, then keeps the GeoTIFF it makes as a depth layer and shows
  * it. [work](progress) answers { file, credit }. Any failure is explained, and nothing is kept.
+ * [instead] is another way to get depths here ({ title, text, label, run }), offered when the
+ * server let the person down rather than this device or the area.
  */
-async function fetchAndKeep(title, noData, work) {
+async function fetchAndKeep(title, noData, work, instead = null) {
   const progress = progressCard(title, 'Keep SeaBathy open and on screen until this finishes.');
   const letSleep = await holdScreenOn();
+  let next = null;
   try {
     const { file, credit } = await work(progress);
     let chart;
@@ -314,28 +321,33 @@ async function fetchAndKeep(title, noData, work) {
         : error instanceof Told ? error.message
           : `Something went wrong while loading the depths${error?.message ? `: ${error.message}` : '.'}`;
       const test = error instanceof Told ? error.check : null;
-      card({
-        title: "Couldn't get the depths", paragraphs: [why], dismissable: true,
+      const offer = instead && error instanceof Told && error.server ? instead : null;
+      const answer = await card({
+        title: offer ? offer.title : "Couldn't get the depths", paragraphs: offer ? [why, offer.text] : [why], dismissable: true,
         // A link to try in this same browser, and what its result means.
         body: test ? [
           el('p', { class: 'card-text' }, el('a', { href: test.url, target: '_blank', rel: 'noopener', id: 'seabed-check', text: test.label })),
           el('p', { class: 'card-text', text: test.means })
         ] : null,
         fine: [error instanceof Told ? error.detail : '', 'Nothing was kept.'].filter(Boolean).join(' '),
-        actions: [{ id: 'ok', label: 'OK', primary: true, domId: 'seabed-failed-ok' }]
+        actions: offer
+          ? [{ id: 'ok', label: 'Not now', domId: 'seabed-failed-ok' }, { id: 'instead', label: offer.label, primary: true, domId: 'seabed-instead' }]
+          : [{ id: 'ok', label: 'OK', primary: true, domId: 'seabed-failed-ok' }]
       });
+      if (offer && answer === 'instead') next = offer.run;
     }
   } finally {
     letSleep();
   }
+  if (next) await next();
 }
 
 /** One GeoTIFF, cut out and sent by a server, kept as it comes. */
-async function download({ url, name, title, credit, asking, noData, who, check }) {
+async function download({ url, name, title, credit, asking, noData, who, check, instead = null }) {
   await fetchAndKeep(title, noData, async (progress) => {
     const parts = await receive(url, { who, check, progress, asking, noData });
     return { file: new File(parts, `${name}.tif`, { type: 'image/tiff' }), credit };
-  });
+  }, instead);
 }
 
 /**
@@ -365,7 +377,7 @@ async function goTo(existing) {
   toast(`${existing.name} is already on this phone.`);
 }
 
-async function getWorldwide(area) {
+async function getWorldwide(area, asking = 'Asking the depth service… this can take a minute') {
   const held = charts.list().find((x) => x.name === seabedName(area)) || alreadyHeld(area, SEABED_CREDIT);
   if (held) {
     await goTo(held);
@@ -377,14 +389,29 @@ async function getWorldwide(area) {
   }
   await download({
     url: seabedUrl(area), name: seabedName(area), title: 'Seabed depths', credit: SEABED_CREDIT, who: 'the GMRT depth service', check: CHECKS.gmrt,
-    asking: 'Asking the depth service… this can take a minute',
+    asking,
     noData: 'The depth service has no data for this area.'
   });
 }
 
+/**
+ * The worldwide depths for the same place as a high-detail box, for when the high-detail server
+ * fails: a different server (GMRT), coarser, so it is offered with one tap rather than nothing.
+ */
+const worldwideInstead = (area) => ({
+  title: "High detail isn't available right now",
+  text: 'You can get the worldwide depths for this area instead. They come from a different server (GMRT) and are coarser, but they show the seabed in 3D and stay on this phone the same way.',
+  label: 'Get worldwide depths',
+  run: () => getWorldwide(seabedArea(area.south, area.west, area.north, area.east, (area.south + area.north) / 2, (area.west + area.east) / 2),
+    'Getting the worldwide depths instead… this can take a minute')
+});
+
+/** A layer of Australian high detail: IMAS's composite, or the same sources put together from AusSeabed. */
+const australianHighDetail = (attribution) => attribution === HIGH_DETAIL_CREDIT || attribution.includes(australia.CREDITS.model) || attribution.includes(australia.CREDITS.survey);
+
 async function getHighDetail(area, plan) {
   const name = seabedName(area, 'High detail');
-  const held = charts.list().find((x) => x.name === name) || alreadyHeld(area, HIGH_DETAIL_CREDIT);
+  const held = charts.list().find((x) => x.name === name) || alreadyHeld(area, australianHighDetail);
   if (held) {
     await goTo(held);
     return;
@@ -393,11 +420,36 @@ async function getHighDetail(area, plan) {
     toast('No internet: the seabed depths need a connection to download.');
     return;
   }
-  await download({
-    url: highDetailUrl(plan), name, title: 'High-detail depths', credit: HIGH_DETAIL_CREDIT, who: "IMAS's server", check: CHECKS.imas,
-    asking: "Asking IMAS's server to cut out this area… up to a minute",
-    noData: 'There are no high-detail depths for this area. Try the worldwide depths.'
-  });
+  const noData = 'There are no high-detail depths for this area. Try the worldwide depths.';
+  await fetchAndKeep('High-detail depths', noData, async (progress) => {
+    let imasFailed;
+    try {
+      const parts = await receive(highDetailUrl(plan), {
+        who: "IMAS's server", check: CHECKS.imas, progress, noData, asking: "Asking IMAS's server to cut out this area… up to a minute"
+      });
+      return { file: new File(parts, `${name}.tif`, { type: 'image/tiff' }), credit: HIGH_DETAIL_CREDIT };
+    } catch (error) {
+      // A device that is offline, or Cancel, is told as it is; IMAS failing in any other way is not the end.
+      if (progress.signal.aborted || !(error instanceof Told) || !navigator.onLine) throw error;
+      imasFailed = error;
+    }
+    // IMAS's servers closed on 25 November 2026: the same sources its composite was made from,
+    // put together here from AusSeabed.
+    progress.set(0, "IMAS's server isn't sending depths, so they are being put together from AusSeabed instead…");
+    try {
+      const net = downloadNet(progress, await libraries());
+      const found = await australia.survey(area, (url, who) => net.json(url, who));
+      const aplan = australia.planFor(area, found, HIGH_DETAIL_CELLS);
+      if (!aplan) throw new Told('AusSeabed has no depths in this box.');
+      const made = await australia.build(area, found, aplan, net);
+      return { file: new File([made.blob], `${name}.tif`, { type: 'image/tiff' }), credit: made.credits.join(' • ') };
+    } catch (error) {
+      if (progress.signal.aborted || error?.name === 'AbortError') throw error;
+      const why = error instanceof Told || error instanceof overseas.NothingHere ? error.message : `${error?.message || error}`;
+      throw new Told(`${imasFailed.message} The same depths couldn't be put together from AusSeabed either: ${why}`,
+        { check: imasFailed.check, detail: imasFailed.detail, server: true });
+    }
+  }, worldwideInstead(area));
 }
 
 // ---------------------------------------------------------------- high detail elsewhere

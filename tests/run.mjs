@@ -296,6 +296,13 @@ async function fileFrom(page, selector) {
 rmSync(profile, { recursive: true, force: true });
 mkdirSync(shots, { recursive: true });
 const fixtures = await writeFixtures(path.join(workDir, 'data'));
+// AusSeabed, for when IMAS fails: one depth model over the test area, "cut out" by the same
+// stand-in server as the worldwide depths.
+writeFileSync(path.join(workDir, 'data', 'ausseabed-list.json'), JSON.stringify({
+  wcs: `${DATA}seabed-service`,
+  models: [{ k: 'model', name: 'Test model 250 m (2026)', year: 2026, res: 250, cov: 'test-model', bbox: [AREA.west - 1, AREA.south - 1, AREA.east + 1, AREA.north + 1] }],
+  surveys: []
+}));
 /** Files the app's server answers with something other than what is on disk (a newer version). */
 const swap = new Map();
 const appServer = await serve({ root: appRoot, port: APP_PORT, swap });
@@ -880,6 +887,8 @@ await step('High detail: in Australian waters, the 10 m composite is asked for f
 
 await step('A download that fails says why: a server that does not answer is not called "no internet"', async () => {
   const before = await page.evaluate(() => window.seabathy.charts.list().length);
+  // AusSeabed failing too, so the reason IMAS gave is what is told.
+  await page.evaluate((url) => window.seabathy.seabed.useServer(url, 'ausseabed'), `${DATA}no-such-list.json`);
   const attempt = async (address) => {
     await page.evaluate((url) => window.seabathy.seabed.useServer(url, 'imas'), address);
     await goTo(page, MID.lng, MID.lat, 12);
@@ -907,6 +916,64 @@ await step('A download that fails says why: a server that does not answer is not
   expect(await page.evaluate(() => window.seabathy.charts.list().length) === before, 'a failed download left a layer behind');
   await page.evaluate((url) => window.seabathy.seabed.useServer(url, 'imas'), `${DATA}high-detail-service`);
   return 'no answer: "did not answer, your internet may be fine"; a 404: "answered 404"';
+});
+
+await step('When IMAS\'s server fails, the same depths are put together from AusSeabed instead', async () => {
+  const before = await page.evaluate(() => window.seabathy.charts.list().length);
+  await page.evaluate(([imas, list]) => { window.seabathy.seabed.useServer(imas, 'imas'); window.seabathy.seabed.useServer(list, 'ausseabed'); },
+    [`${DATA}no-such-service`, `${DATA}ausseabed-list.json`]);
+  const asked = () => page.evaluate((prefix) => performance.getEntriesByType('resource').filter((e) => e.name.startsWith(prefix) && /coverageId=test-model/.test(e.name)).length, `${DATA}seabed-service`);
+  await goTo(page, MID.lng, MID.lat, 12);
+  await openMenu(page, 'menu-seabed');
+  await page.click('#seabed-high');
+  await page.waitForSelector('#area-bar');
+  await drawBox(page);
+  await pickerReady(page);
+  await page.click('#area-go');
+  await page.waitForFunction((n) => window.seabathy.charts.list().length > n || document.querySelector('#seabed-failed-ok'), before, { timeout: LOAD });
+  const failed = await page.locator('#seabed-failed-ok').count() ? await page.locator('.card').innerText() : '';
+  expect(!failed, `instead of the depths: ${failed.replace(/\s+/g, ' ')}`);
+  const info = await page.evaluate(() => { const c = window.seabathy.charts.list().at(-1); return { name: c.name, credit: c.attribution }; });
+  expect(/^High detail /.test(info.name) && /Geoscience Australia, AusBathyTopo/.test(info.credit) && !/IMAS/.test(info.credit), `it was kept as "${info.name}", credited "${info.credit}"`);
+  expect((await asked()) > 0, "AusSeabed's server was not asked");
+  await removeLayer(page);
+  await page.waitForFunction((n) => window.seabathy.charts.list().length === n, before, { timeout: 10000 });
+  await closeSheet(page).catch(() => {});
+  await page.evaluate((url) => window.seabathy.seabed.useServer(url, 'imas'), `${DATA}high-detail-service`);
+  return `IMAS answered 404; "${info.name}" was put together from AusSeabed and credited "${info.credit}"`;
+});
+
+await step('When AusSeabed fails as well, the worldwide depths for the same area are one tap away', async () => {
+  const before = await page.evaluate(() => window.seabathy.charts.list().length);
+  await page.evaluate(([imas, gmrt, list]) => { window.seabathy.seabed.useServer(imas, 'imas'); window.seabathy.seabed.useServer(gmrt, 'gmrt'); window.seabathy.seabed.useServer(list, 'ausseabed'); },
+    [`${DATA}no-such-service`, `${DATA}seabed-service`, `${DATA}no-such-list.json`]);
+  const gmrtAsked = () => page.evaluate((prefix) => performance.getEntriesByType('resource').filter((e) => e.name.startsWith(prefix)).length, `${DATA}seabed-service`);
+  const askedBefore = await gmrtAsked();
+  await goTo(page, MID.lng, MID.lat, 12);
+  await openMenu(page, 'menu-seabed');
+  await page.click('#seabed-high');
+  await page.waitForSelector('#area-bar');
+  await drawBox(page);
+  await pickerReady(page);
+  await page.click('#area-go');
+  await page.waitForSelector('#seabed-instead', { timeout: 60000 });
+  const said = await page.locator('.card').innerText();
+  expect(/High detail isn't available right now/.test(said) && /IMAS's server answered 404/.test(said) && /worldwide depths for this area instead/.test(said),
+    `the card said: ${said.replace(/\s+/g, ' ')}`);
+  await shot(page, '4f-high-detail-fallback');
+  await page.click('#seabed-instead');
+  // Either the worldwide depths are downloaded, or the ones already on the phone for this area are shown.
+  await page.waitForFunction((n) => window.seabathy.charts.list().length > n || /already on this phone/.test(document.querySelector('#toast').textContent), before, { timeout: LOAD });
+  const after = await page.evaluate(() => ({ count: window.seabathy.charts.list().length, last: window.seabathy.charts.list().at(-1)?.attribution || '', toast: document.querySelector('#toast').textContent }));
+  const fresh = after.count > before;
+  expect(fresh ? /GMRT/.test(after.last) && (await gmrtAsked()) > askedBefore : /already on this phone/.test(after.toast), `after the tap: ${JSON.stringify(after)}`);
+  if (fresh) {
+    await removeLayer(page);
+    await page.waitForFunction((n) => window.seabathy.charts.list().length === n, before, { timeout: 10000 });
+  }
+  await closeSheet(page).catch(() => {});
+  await page.evaluate((url) => window.seabathy.seabed.useServer(url, 'imas'), `${DATA}high-detail-service`);
+  return fresh ? 'IMAS failed, one tap got the worldwide (GMRT) depths for the same area' : 'IMAS failed, one tap showed the worldwide depths already on the phone';
 });
 
 await step('High detail outside Australia: places and sources, server addresses, the composite\'s sums, projections and the file it writes', async () => {

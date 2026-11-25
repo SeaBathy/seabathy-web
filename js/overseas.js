@@ -421,7 +421,7 @@ function rangeClient(url, net, who) {
 }
 
 /** A GeoTIFF's first image as a block of depths in longitude and latitude: { values, cols, rows, west, north, dx, dy }. */
-async function geographicBlock(GeoTIFF, bytes, signal) {
+export async function geographicBlock(GeoTIFF, bytes, signal) {
   const image = await (await GeoTIFF.fromArrayBuffer(bytes)).getImage(0);
   const [west, south, east, north] = image.getBoundingBox();
   const cols = image.getWidth();
@@ -436,7 +436,7 @@ async function geographicBlock(GeoTIFF, bytes, signal) {
 }
 
 /** The pieces a request over the grid is split into, each at most [CHUNK] cells a side at [cellX] × [cellY] degrees. */
-function chunks(grid, cellX, cellY) {
+export function chunks(grid, cellX, cellY) {
   const across = Math.max(1, Math.ceil((grid.east - grid.west) / cellX / CHUNK));
   const down = Math.max(1, Math.ceil((grid.north - grid.south) / cellY / CHUNK));
   const w = (grid.east - grid.west) / across;
@@ -469,7 +469,7 @@ async function inTurn(list, atOnce, work) {
 }
 
 /** Opens a cloud-optimised GeoTIFF and picks its level for [cell] metres: { image, width, height, bbox, tileHeight, noData }. */
-async function openLevel(GeoTIFF, url, net, who, cell, groundScale = 1) {
+export async function openLevel(GeoTIFF, url, net, who, cell, groundScale = 1) {
   const tiff = await GeoTIFF.fromCustomClient(rangeClient(url, net, who), { blockSize: 65536, cacheSize: 200 });
   const first = await tiff.getImage(0);
   const bbox = first.getBoundingBox();
@@ -504,7 +504,7 @@ function asNumbers(image, buffer) {
  * leaves out (no bytes: nothing surveyed there) is simply empty. geotiff.js's own window reader
  * fails on those, and LINZ's files have many.
  */
-const readWindow = (level, signal) => async (c0, r0, c1, r1) => {
+export const readWindow = (level, signal) => async (c0, r0, c1, r1) => {
   const { image, decoder, noData } = level;
   const tw = image.getTileWidth();
   const th = image.getTileHeight();

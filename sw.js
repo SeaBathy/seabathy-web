@@ -4,7 +4,7 @@
 //
 // Raise VERSION with every change to any file in FILES: that is what makes phones fetch the new copy.
 
-const VERSION = '0.4.1';
+const VERSION = '0.4.2';
 const CACHE = `seabathy-${VERSION}`;
 // Zones, names and ramps: each is kept the first time it is fetched, and stays through app
 // updates. Raise the number when a file in data/ changes.
@@ -18,6 +18,7 @@ const FILES = [
   'css/app.css',
   'js/app.js',
   'js/areapicker.js',
+  'js/australia.js',
   'js/backup.js',
   'js/basemap.js',
   'js/charts.js',
